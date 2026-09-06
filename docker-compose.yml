@@ -1,0 +1,63 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: ustauz-mongo
+    restart: unless-stopped
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ustauz
+      MONGO_INITDB_ROOT_PASSWORD: ustauz
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      # The matching service needs multi-document transactions, which require a
+      # replica set — initiate a single-node one on first healthy start.
+      test: >
+        mongosh --quiet -u ustauz -p ustauz --authenticationDatabase admin
+        --eval "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}).ok }"
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    container_name: ustauz-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      target: development
+    container_name: ustauz-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://ustauz:ustauz@mongo:27017/ustauz?authSource=admin&replicaSet=rs0
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  mongo-data:
+  redis-data:
