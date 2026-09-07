@@ -1,5 +1,7 @@
 # Render blueprint for the Usta.uz API.
 #
+# This mirrors the live service (Docker runtime, Oregon) so the two do not drift.
+#
 # `src/config/env.ts` validates the whole environment at boot and throws rather
 # than starting half-configured, so every variable it has no default for is
 # declared here — wired to another Render resource, generated, or `sync: false`
@@ -7,25 +9,26 @@
 #
 # Everything the schema defaults (Payme, Click, Cloudinary, FCM, Sentry, the
 # matching tuning knobs) is deliberately left out: declaring it as `sync: false`
-# would make Render demand a value before the blueprint could be created.
-# Add those in the dashboard once the accounts exist.
+# would make Render demand a value for every unused credential before the
+# blueprint could be created. Add those in the dashboard once the accounts exist.
 services:
   # ─── API ─────────────────────────────────────────────────────────────────
   - name: ustauz-api
     type: web
-    runtime: node
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     plan: free
-    region: frankfurt
+    region: oregon
+    # Reports Mongo and Redis separately, so a failing check distinguishes
+    # "the process is up" from "the process can actually serve traffic".
     healthCheckPath: /health
-    # `--include=dev` is not optional: Render sets NODE_ENV=production, and the
-    # build needs TypeScript, which lives in devDependencies.
-    buildCommand: npm ci --include=dev && npm run build
-    startCommand: npm start
     envVars:
-      - key: NODE_VERSION
-        value: 22.11.0
       - key: NODE_ENV
         value: production
+      # Matches EXPOSE in the Dockerfile; the app reads it via the env schema.
+      - key: PORT
+        value: '4000'
       - key: API_PREFIX
         value: /api/v1
       - key: LOG_LEVEL
@@ -54,11 +57,21 @@ services:
       - key: BCRYPT_ROUNDS
         value: '12'
 
-      # `console` only logs the code instead of sending it. Switch to `eskiz`
-      # and add ESKIZ_EMAIL / ESKIZ_PASSWORD in the dashboard before real users
-      # sign in, otherwise every login fails against an empty account.
+      # An empty value allows every origin, which is what the mobile app needs
+      # until the landing page has a domain of its own.
+      - key: CORS_ORIGINS
+        sync: false
+
+      # Eskiz refuses an empty account, so the credentials have to land in the
+      # same change that selects the provider.
       - key: SMS_PROVIDER
-        value: console
+        value: eskiz
+      - key: ESKIZ_EMAIL
+        sync: false
+      - key: ESKIZ_PASSWORD
+        sync: false
+      - key: ESKIZ_FROM
+        value: '4546'
 
       - key: ORDER_ACCEPT_FEE
         value: '4999'
@@ -67,7 +80,7 @@ services:
   - name: ustauz-keyvalue
     type: keyvalue
     plan: free
-    region: frankfurt
+    region: oregon
     # Only the API talks to it, over the private network.
     ipAllowList: []
     # BullMQ keeps job state here; evicting a key under memory pressure would
