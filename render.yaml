@@ -1,0 +1,75 @@
+# Render blueprint for the Usta.uz API.
+#
+# `src/config/env.ts` validates the whole environment at boot and throws rather
+# than starting half-configured, so every variable it has no default for is
+# declared here — wired to another Render resource, generated, or `sync: false`
+# so Render asks for it once instead of keeping a secret in the repository.
+#
+# Everything the schema defaults (Payme, Click, Cloudinary, FCM, Sentry, the
+# matching tuning knobs) is deliberately left out: declaring it as `sync: false`
+# would make Render demand a value before the blueprint could be created.
+# Add those in the dashboard once the accounts exist.
+services:
+  # ─── API ─────────────────────────────────────────────────────────────────
+  - name: ustauz-api
+    type: web
+    runtime: node
+    plan: free
+    region: frankfurt
+    healthCheckPath: /health
+    # `--include=dev` is not optional: Render sets NODE_ENV=production, and the
+    # build needs TypeScript, which lives in devDependencies.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 22.11.0
+      - key: NODE_ENV
+        value: production
+      - key: API_PREFIX
+        value: /api/v1
+      - key: LOG_LEVEL
+        value: info
+
+      # Atlas connection string, with the database name and credentials.
+      - key: MONGO_URI
+        sync: false
+
+      - key: REDIS_URL
+        fromService:
+          name: ustauz-keyvalue
+          type: keyvalue
+          property: connectionString
+
+      # 256-bit base64, comfortably past the 32-character minimum the schema
+      # enforces. Rotating either one invalidates the matching tokens.
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_TTL
+        value: 15m
+      - key: JWT_REFRESH_TTL
+        value: 30d
+      - key: BCRYPT_ROUNDS
+        value: '12'
+
+      # `console` only logs the code instead of sending it. Switch to `eskiz`
+      # and add ESKIZ_EMAIL / ESKIZ_PASSWORD in the dashboard before real users
+      # sign in, otherwise every login fails against an empty account.
+      - key: SMS_PROVIDER
+        value: console
+
+      - key: ORDER_ACCEPT_FEE
+        value: '4999'
+
+  # ─── Redis ───────────────────────────────────────────────────────────────
+  - name: ustauz-keyvalue
+    type: keyvalue
+    plan: free
+    region: frankfurt
+    # Only the API talks to it, over the private network.
+    ipAllowList: []
+    # BullMQ keeps job state here; evicting a key under memory pressure would
+    # silently drop a queued match, so nothing may be evicted.
+    maxmemoryPolicy: noeviction
