@@ -17,6 +17,8 @@ export interface IProduct {
   rating: number;
   ratingCount: number;
   isActive: boolean;
+  /** Set when the seller deletes it — unlike an admin hide, that cannot be undone by an admin. */
+  deletedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -45,6 +47,7 @@ const productSchema = new Schema<IProduct, ProductModel>(
     rating: { type: Number, default: 0, min: 0, max: 5 },
     ratingCount: { type: Number, default: 0, min: 0 },
     isActive: { type: Boolean, default: true },
+    deletedAt: { type: Date },
   },
   {
     timestamps: true,

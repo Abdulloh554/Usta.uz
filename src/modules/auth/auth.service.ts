@@ -17,9 +17,16 @@ import {
   ttlSeconds,
   verifyRefreshToken,
 } from '../../common/utils/token';
-import { Language, UserRole } from '../../common/types';
+import {
+  Language,
+  PaymentProvider,
+  TransactionStatus,
+  TransactionType,
+  UserRole,
+} from '../../common/types';
 import { User, type UserDocument } from '../user/user.model';
 import { MasterProfile } from '../user/masterProfile.model';
+import { Transaction } from '../wallet/transaction.model';
 import type {
   ForgotPasswordInput,
   LoginInput,
@@ -114,6 +121,21 @@ export const register = async (input: RegisterInput): Promise<AuthResult> => {
     balance: input.role === UserRole.MASTER ? MASTER_SIGNUP_BONUS : 0,
   });
 
+  // Every so'm in a wallet has a ledger entry, the bonus included — otherwise the
+  // pro's history and the admin's totals cannot explain the balance.
+  if (user.balance > 0) {
+    await Transaction.create({
+      user: user._id,
+      type: TransactionType.ADJUSTMENT,
+      status: TransactionStatus.SUCCESS,
+      provider: PaymentProvider.BALANCE,
+      amount: user.balance,
+      balanceAfter: user.balance,
+      description: 'Sign-up bonus',
+      settledAt: new Date(),
+    });
+  }
+
   if (input.role === UserRole.MASTER) {
     await MasterProfile.create({
       user: user._id,
@@ -182,8 +204,14 @@ export const logout = async (token: string): Promise<void> => {
   }
 };
 
+/**
+ * Ends every session, including access tokens already handed out: they are
+ * refused from the next whole second, and the marker outlives the longest
+ * access token it could apply to.
+ */
 export const logoutEverywhere = async (userId: string): Promise<void> => {
   await revokeAllRefreshTokens(userId);
+  await redis.set(keys.revokedBefore(userId), String(Math.ceil(Date.now() / 1000)), 'EX', 24 * 60 * 60);
 };
 
 export const checkPhone = async (input: string): Promise<PhoneCheckResult> => {

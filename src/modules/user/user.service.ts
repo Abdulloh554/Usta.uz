@@ -71,8 +71,14 @@ export const setOnline = async (userId: string, online: boolean): Promise<void> 
   }
 };
 
+/** What anyone — signed in or not — may see about a pro: never their phone or wallet. */
+type PublicMaster = Pick<
+  PublicUser,
+  'id' | 'firstName' | 'lastName' | 'fullName' | 'initials' | 'role' | 'avatarUrl' | 'createdAt'
+>;
+
 export type MasterPublicProfile = {
-  user: PublicUser;
+  user: PublicMaster;
   profile: IMasterProfile;
   stats: {
     rating: number;
@@ -88,8 +94,18 @@ export const getMasterProfile = async (masterId: string): Promise<MasterPublicPr
   const profile = await MasterProfile.findOne({ user: masterId }).lean();
   if (!profile) throw new NotFoundError('Master profile');
 
+  const account = toPublicUser(user);
   return {
-    user: toPublicUser(user),
+    user: {
+      id: account.id,
+      firstName: account.firstName,
+      lastName: account.lastName,
+      fullName: account.fullName,
+      initials: account.initials,
+      role: account.role,
+      avatarUrl: account.avatarUrl,
+      createdAt: account.createdAt,
+    },
     profile,
     stats: {
       rating: profile.rating,

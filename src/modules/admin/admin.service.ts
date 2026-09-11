@@ -17,7 +17,7 @@ import {
   type Paginated,
 } from '../../common/types';
 import { paginate } from '../../common/utils/http';
-import { emitToUser } from '../../sockets/emitter';
+import { disconnectUser, emitToUser } from '../../sockets/emitter';
 import { SocketEvent } from '../../sockets/events';
 import { User, type IUser, type UserDocument } from '../user/user.model';
 import { MasterProfile } from '../user/masterProfile.model';
@@ -62,6 +62,14 @@ const isObjectId = (value: string): boolean => /^[0-9a-fA-F]{24}$/.test(value);
 
 const PERSON = 'firstName lastName phone avatarUrl role';
 
+/** The journal is read in the Uzbek panel, so its lines are written in Uzbek too. */
+const grouped = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
+const som = (value: number): string => `${grouped.format(value)} so'm`;
+const signedSom = (value: number): string => `${value > 0 ? '+' : '−'}${som(Math.abs(value))}`;
+
+/** `summary` is capped at 300 characters, and a 300-character reason must not push it over. */
+const SUMMARY_MAX = 300;
+
 const record = async (
   adminId: string,
   action: AdminAction,
@@ -78,7 +86,7 @@ const record = async (
       action,
       targetType,
       targetId: targetId ? oid(targetId) : undefined,
-      summary,
+      summary: summary.length > SUMMARY_MAX ? `${summary.slice(0, SUMMARY_MAX - 1)}…` : summary,
       meta,
     });
   } catch (error) {
@@ -231,8 +239,8 @@ export const updateUserStatus = async (
     user.blockReason = input.isBlocked ? input.blockReason : undefined;
     actions.push(
       input.isBlocked
-        ? [AdminAction.USER_BLOCKED, `Blocked ${user.fullName()}: ${input.blockReason ?? ''}`]
-        : [AdminAction.USER_UNBLOCKED, `Unblocked ${user.fullName()}`],
+        ? [AdminAction.USER_BLOCKED, `${user.fullName()} bloklandi: ${input.blockReason ?? ''}`]
+        : [AdminAction.USER_UNBLOCKED, `${user.fullName()} blokdan chiqarildi`],
     );
   }
 
@@ -240,8 +248,8 @@ export const updateUserStatus = async (
     user.isActive = input.isActive;
     actions.push(
       input.isActive
-        ? [AdminAction.USER_ACTIVATED, `Activated ${user.fullName()}`]
-        : [AdminAction.USER_DEACTIVATED, `Deactivated ${user.fullName()}`],
+        ? [AdminAction.USER_ACTIVATED, `${user.fullName()} hisobi faollashtirildi`]
+        : [AdminAction.USER_DEACTIVATED, `${user.fullName()} hisobi o'chirildi`],
     );
   }
 
@@ -252,6 +260,7 @@ export const updateUserStatus = async (
   // stops being offered jobs straight away rather than at their next reconnect.
   if (user.isBlocked || !user.isActive) {
     await logoutEverywhere(userId);
+    disconnectUser(userId);
     if (user.role === UserRole.MASTER) {
       await MasterProfile.updateOne({ user: user._id }, { $set: { isOnline: false } });
     }
@@ -268,12 +277,13 @@ export const updateUserStatus = async (
 export const revokeSessions = async (adminId: string, userId: string): Promise<void> => {
   const user = await loadManageableUser(adminId, userId);
   await logoutEverywhere(userId);
+  disconnectUser(userId);
   await record(
     adminId,
     AdminAction.USER_SESSIONS_REVOKED,
     AdminTarget.USER,
     userId,
-    `Signed ${user.fullName()} out of every device`,
+    `${user.fullName()} barcha qurilmalardan chiqarildi`,
   );
 };
 
@@ -286,8 +296,8 @@ export const adjustBalance = async (
   userId: string,
   input: AdjustBalanceInput,
 ): Promise<{ user: UserDocument; transaction: TransactionDocument }> => {
-  const existing = await User.findById(userId).select('_id firstName lastName balance');
-  if (!existing) throw new NotFoundError('User');
+  // Same guard as blocking: no admin tops up their own wallet, or another admin's.
+  const existing = await loadManageableUser(adminId, userId);
 
   const guard = input.amount < 0 ? { balance: { $gte: -input.amount } } : {};
   const user = await User.findOneAndUpdate(
@@ -328,7 +338,7 @@ export const adjustBalance = async (
     AdminAction.USER_BALANCE_ADJUSTED,
     AdminTarget.USER,
     userId,
-    `${input.amount > 0 ? '+' : ''}${input.amount} so'm to ${user.fullName()}: ${input.note}`,
+    `${user.fullName()}: ${signedSom(input.amount)} — ${input.note}`,
     { amount: input.amount, balanceAfter: user.balance, transactionId: String(transaction._id) },
   );
 
@@ -422,11 +432,24 @@ export const cancelOrder = async (
   const shouldCancel = order.status !== OrderStatus.DONE && order.status !== OrderStatus.CANCELLED;
 
   if (shouldCancel) {
-    order.status = OrderStatus.CANCELLED;
-    order.cancelReason = input.reason;
-    order.cancelledBy = UserRole.ADMIN;
-    order.cancelledAt = new Date();
-    await order.save();
+    // Conditional, like the user-side cancel: an accept landing in the same
+    // instant must not be overwritten.
+    const updated = await Order.findOneAndUpdate(
+      { _id: order._id, status: order.status },
+      {
+        $set: {
+          status: OrderStatus.CANCELLED,
+          cancelReason: input.reason,
+          cancelledBy: UserRole.ADMIN,
+          cancelledAt: new Date(),
+        },
+      },
+      { new: true },
+    );
+    if (!updated) {
+      throw new ConflictError('The job changed while you were cancelling it — reload and try again', 'ORDER_CHANGED');
+    }
+    order.set(updated.toObject());
 
     if (wasSearching) await abortMatching(orderId);
     if (order.master) await Chat.updateOne({ order: order._id }, { $set: { isClosed: true } });
@@ -461,7 +484,7 @@ export const cancelOrder = async (
     shouldCancel ? AdminAction.ORDER_CANCELLED : AdminAction.ORDER_FEE_REFUNDED,
     AdminTarget.ORDER,
     orderId,
-    `#${order.code}: ${input.reason}${refund ? ` (fee ${refund.amount} so'm refunded)` : ''}`,
+    `#${order.code}: ${input.reason}${refund ? ` (xizmat haqi ${som(refund.amount)} qaytarildi)` : ''}`,
     { reason: input.reason, refunded: refund?.amount ?? 0 },
   );
 
@@ -558,7 +581,7 @@ export const setChatClosed = async (
     isClosed ? AdminAction.CHAT_CLOSED : AdminAction.CHAT_REOPENED,
     AdminTarget.CHAT,
     chatId,
-    isClosed ? 'Chat closed' : 'Chat reopened',
+    isClosed ? 'Chat yopildi' : 'Chat qayta ochildi',
   );
   return chat;
 };
@@ -579,7 +602,7 @@ export const deleteMessage = async (adminId: string, messageId: string): Promise
     await chat.save();
   }
 
-  await record(adminId, AdminAction.MESSAGE_DELETED, AdminTarget.MESSAGE, messageId, 'Message deleted', {
+  await record(adminId, AdminAction.MESSAGE_DELETED, AdminTarget.MESSAGE, messageId, "Xabar o'chirildi", {
     chatId: message.chat.toString(),
     senderId: message.sender.toString(),
     text: message.text.slice(0, 200),
@@ -616,14 +639,21 @@ export const setProductActive = async (
   productId: string,
   isActive: boolean,
 ): Promise<ProductDocument> => {
-  const product = await Product.findByIdAndUpdate(productId, { $set: { isActive } }, { new: true });
+  const product = await Product.findById(productId);
   if (!product) throw new NotFoundError('Product');
+  // Hiding is moderation and can be undone; a seller's own delete cannot be
+  // undone by anyone else — it would put back something they took down.
+  if (isActive && product.deletedAt) {
+    throw new ConflictError('The seller deleted this product; it cannot be restored', 'PRODUCT_DELETED');
+  }
+  product.isActive = isActive;
+  await product.save();
   await record(
     adminId,
     isActive ? AdminAction.PRODUCT_RESTORED : AdminAction.PRODUCT_HIDDEN,
     AdminTarget.PRODUCT,
     productId,
-    `${isActive ? 'Restored' : 'Hid'} "${product.title}"`,
+    `"${product.title}" ${isActive ? 'tiklandi' : 'yashirildi'}`,
   );
   return product;
 };
@@ -687,7 +717,7 @@ export const setReviewVisible = async (
     isVisible ? AdminAction.REVIEW_RESTORED : AdminAction.REVIEW_HIDDEN,
     AdminTarget.REVIEW,
     reviewId,
-    `${isVisible ? 'Restored' : 'Hid'} a ${review.stars}★ review`,
+    `${review.stars}★ sharh ${isVisible ? 'tiklandi' : 'yashirildi'}`,
   );
   return review;
 };

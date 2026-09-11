@@ -100,6 +100,8 @@ export type JwtPayload = {
   role: UserRole;
   /** Present on refresh tokens only; identifies the rotation family member. */
   jti?: string;
+  /** Issued-at, in seconds — set by `jsonwebtoken`, compared against a revocation cut-off. */
+  iat?: number;
 };
 
 export type AuthenticatedUser = {

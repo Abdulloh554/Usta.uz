@@ -59,6 +59,8 @@ export const keys = {
   smsAttempts: (phone: string): string => `sms:attempts:${phone}`,
   refreshToken: (userId: string, tokenId: string): string => `auth:refresh:${userId}:${tokenId}`,
   refreshTokensOfUser: (userId: string): string => `auth:refresh:${userId}:*`,
+  /** Unix seconds; access tokens this user was issued before it are refused. */
+  revokedBefore: (userId: string): string => `auth:revoked-before:${userId}`,
   /** Ordered candidate list for one order's matching run. */
   matchQueue: (orderId: string): string => `match:queue:${orderId}`,
   /** The offer currently outstanding for an order: which pro, since when. */

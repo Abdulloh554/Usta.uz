@@ -28,7 +28,11 @@ export const registerSchema = z
       errorMap: () => ({ message: 'You must accept the app rules' }),
     }),
     /** Pros only — the trades picked on the sign-up form. */
-    crafts: z.array(z.nativeEnum(Craft)).max(12).optional(),
+    crafts: z
+      .array(z.nativeEnum(Craft))
+      .max(12)
+      .refine((crafts) => new Set(crafts).size === crafts.length, 'Each trade can be picked once')
+      .optional(),
     about: z.string().trim().max(1000).optional(),
     regions: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   })

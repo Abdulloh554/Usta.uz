@@ -16,8 +16,10 @@ import { User } from '../user/user.model';
 import { notify } from '../notification/notification.service';
 import { Transaction, type ITransaction, type TransactionDocument } from './transaction.model';
 
-/** Smallest sensible top-up: one job fee. Anything less cannot buy anything. */
+/** Smallest top-up accepted; below this the provider's own fee outweighs the payment. */
 const MIN_TOP_UP = 1_000;
+/** Largest single top-up — a typo'd extra zero should not become a real charge. */
+const MAX_TOP_UP = 10_000_000;
 
 export const getBalance = async (userId: string): Promise<{ balance: number; fee: number }> => {
   const user = await User.findById(userId).select('balance').lean();
@@ -38,7 +40,13 @@ export const listTransactions = async (
     Transaction.countDocuments(filter),
   ]);
 
-  return paginate(items, total, page, limit);
+  // `.lean()` drops the `id` virtual; the app keys rows by it.
+  return paginate(
+    items.map((item) => ({ ...item, id: String(item._id) })),
+    total,
+    page,
+    limit,
+  );
 };
 
 export type TopUpInput = {
@@ -82,6 +90,11 @@ export const startTopUp = async (userId: string, input: TopUpInput): Promise<Top
   if (input.amount < MIN_TOP_UP) {
     throw new BadRequestError(`The smallest top-up is ${MIN_TOP_UP} so'm`, [
       { field: 'amount', message: 'below_minimum' },
+    ]);
+  }
+  if (input.amount > MAX_TOP_UP) {
+    throw new BadRequestError(`The largest top-up is ${MAX_TOP_UP} so'm`, [
+      { field: 'amount', message: 'above_maximum' },
     ]);
   }
 

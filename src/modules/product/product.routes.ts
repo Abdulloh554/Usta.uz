@@ -12,13 +12,29 @@ import * as productService from './product.service';
 
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Must be a hex colour');
 
+/**
+ * Accepts `12000` or `"12000"` from a form, but not the values `z.coerce` would
+ * quietly turn into a number — `""` and `null` became 0, `true` became 1.
+ */
+const wholeNumber = (max: number) =>
+  z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() !== '' ? Number(value) : value),
+    z.number().int().nonnegative().max(max),
+  );
+
+/** `z.string().url()` also passes `javascript:` links, which must never reach an `<img>`. */
+const webUrl = z
+  .string()
+  .url()
+  .refine((url) => /^https?:\/\//i.test(url), 'Must be an http(s) link');
+
 const productBodySchema = z.object({
   title: z.string().trim().min(2).max(140),
   description: z.string().trim().max(2000).optional(),
-  price: z.coerce.number().int().nonnegative(),
-  images: z.array(z.string().url()).max(8).optional(),
+  price: wholeNumber(1_000_000_000),
+  images: z.array(webUrl).max(8).optional(),
   category: z.string().trim().max(60).optional(),
-  stock: z.coerce.number().int().nonnegative().optional(),
+  stock: wholeNumber(1_000_000).optional(),
   gradient: z.object({ from: hexColor, to: hexColor }).optional(),
 });
 

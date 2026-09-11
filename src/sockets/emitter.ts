@@ -35,4 +35,9 @@ export const emitToOrder = (orderId: string, event: SocketEvent, payload: unknow
   io?.to(room.order(orderId)).emit(event, payload);
 };
 
+/** Drops every open connection a user has — used when their account is blocked. */
+export const disconnectUser = (userId: string): void => {
+  io?.in(room.user(userId)).disconnectSockets(true);
+};
+
 export const isSocketReady = (): boolean => io !== null;

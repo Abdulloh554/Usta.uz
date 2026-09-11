@@ -19,7 +19,7 @@ import { User } from '../user/user.model';
 import { Chat } from '../chat/chat.model';
 import { Transaction } from '../wallet/transaction.model';
 import { emitToUser } from '../../sockets/emitter';
-import { SocketEvent } from '../../sockets/events';
+import { SocketEvent, type OrderOfferPayload } from '../../sockets/events';
 import { cancelOfferTimeout, offerTimeoutJobId, scheduleOfferTimeout } from '../../jobs/queues';
 import { cancelLocal, isQueueCapable, scheduleLocal } from '../../jobs/scheduler';
 import { CATEGORY_CRAFTS, type MatchCandidate, type MatchingRunState, type OutstandingOffer } from './matching.types';
@@ -170,6 +170,35 @@ const publishSearchState = async (order: OrderDocument): Promise<void> => {
   });
 };
 
+/**
+ * The offer card's content. Shared by the first offer and the one handed back on
+ * reconnect, so a resumed offer renders exactly like the original.
+ */
+const buildOfferPayload = async (
+  order: OrderDocument,
+  expiresAt: number,
+  expiresInSeconds: number,
+): Promise<OrderOfferPayload> => {
+  const client = await User.findById(order.client).select('firstName lastName').lean();
+  return {
+    orderId: order.id as string,
+    code: order.code,
+    title: order.title,
+    description: order.description,
+    category: order.category,
+    client: {
+      id: order.client.toString(),
+      name: client ? `${client.firstName} ${client.lastName.charAt(0)}.` : '',
+      initials: client ? `${client.firstName.charAt(0)}${client.lastName.charAt(0)}`.toUpperCase() : '',
+    },
+    distanceKm: null,
+    region: order.region ?? null,
+    fee: env.ORDER_ACCEPT_FEE,
+    expiresInSeconds,
+    expiresAt: new Date(expiresAt).toISOString(),
+  };
+};
+
 /** Offers the job to the next queued pro, or gives up when the queue runs dry. */
 export const offerNext = async (orderId: string): Promise<MatchingRunState> => {
   const order = await Order.findById(orderId);
@@ -181,7 +210,15 @@ export const offerNext = async (orderId: string): Promise<MatchingRunState> => {
     return { orderId, offered: order.offers.length, remaining: 0, current: null };
   }
 
-  const masterId = await redis.lpop(keys.matchQueue(orderId));
+  // A pro already ringing for another job is skipped rather than handed a second
+  // offer: the phone can ring for one job at a time, and the second offer would
+  // overwrite the first in `masterOffer`.
+  let masterId = await redis.lpop(keys.matchQueue(orderId));
+  while (masterId) {
+    const busyWith = await redis.get(keys.masterOffer(masterId));
+    if (!busyWith || busyWith === orderId) break;
+    masterId = await redis.lpop(keys.matchQueue(orderId));
+  }
 
   if (!masterId) {
     order.status = OrderStatus.PENDING;
@@ -212,25 +249,7 @@ export const offerNext = async (orderId: string): Promise<MatchingRunState> => {
 
   await armOfferTimeout(orderId, masterId);
 
-  const client = await User.findById(order.client).select('firstName lastName').lean();
-
-  emitToUser(masterId, SocketEvent.ORDER_OFFER, {
-    orderId,
-    code: order.code,
-    title: order.title,
-    description: order.description,
-    category: order.category,
-    client: {
-      id: order.client.toString(),
-      name: client ? `${client.firstName} ${client.lastName.charAt(0)}.` : '',
-      initials: client ? `${client.firstName.charAt(0)}${client.lastName.charAt(0)}`.toUpperCase() : '',
-    },
-    distanceKm: null,
-    region: order.region ?? null,
-    fee: env.ORDER_ACCEPT_FEE,
-    expiresInSeconds: OFFER_TIMEOUT,
-    expiresAt: new Date(expiresAt).toISOString(),
-  });
+  emitToUser(masterId, SocketEvent.ORDER_OFFER, await buildOfferPayload(order, expiresAt, OFFER_TIMEOUT));
 
   await publishSearchState(order);
 
@@ -480,4 +499,16 @@ export const outstandingOfferFor = async (masterId: string): Promise<Outstanding
   if (!orderId) return null;
   const offer = await readOffer(orderId);
   return offer?.masterId === masterId ? offer : null;
+};
+
+/** The full offer card for a pro who reconnects mid-offer, or `null` if none is pending. */
+export const resumableOfferFor = async (
+  masterId: string,
+): Promise<(OrderOfferPayload & { resumed: true }) | null> => {
+  const offer = await outstandingOfferFor(masterId);
+  if (!offer) return null;
+  const order = await Order.findById(offer.orderId);
+  if (!order) return null;
+  const secondsLeft = Math.max(0, Math.round((offer.expiresAt - Date.now()) / 1_000));
+  return { ...(await buildOfferPayload(order, offer.expiresAt, secondsLeft)), resumed: true };
 };

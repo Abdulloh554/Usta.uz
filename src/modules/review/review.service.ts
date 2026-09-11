@@ -97,7 +97,7 @@ export const rateProduct = async (
   input: RateProductInput,
 ): Promise<ReviewDocument> => {
   const product = await Product.findById(input.productId);
-  if (!product) throw new NotFoundError('Product');
+  if (!product || !product.isActive) throw new NotFoundError('Product');
 
   if (product.seller.toString() === authorId) {
     throw new ForbiddenError('You cannot review your own product', 'SELF_REVIEW');
@@ -112,14 +112,23 @@ export const rateProduct = async (
     throw new ConflictError('You have already reviewed this product', 'ALREADY_REVIEWED');
   }
 
-  const review = await Review.create({
-    author: new mongoose.Types.ObjectId(authorId),
-    targetType: ReviewTarget.PRODUCT,
-    target: product._id,
-    product: product._id,
-    stars: input.stars,
-    comment: input.comment ?? '',
-  });
+  let review: ReviewDocument;
+  try {
+    review = await Review.create({
+      author: new mongoose.Types.ObjectId(authorId),
+      targetType: ReviewTarget.PRODUCT,
+      target: product._id,
+      product: product._id,
+      stars: input.stars,
+      comment: input.comment ?? '',
+    });
+  } catch (error) {
+    // Parallel submits get past the `findOne` above; the unique index stops them.
+    if ((error as { code?: number }).code === 11000) {
+      throw new ConflictError('You have already reviewed this product', 'ALREADY_REVIEWED');
+    }
+    throw error;
+  }
 
   await recomputeRating(ReviewTarget.PRODUCT, product._id);
   return review;
@@ -148,7 +157,13 @@ const listFor = async (
     Review.countDocuments(filter),
   ]);
 
-  return paginate(items, total, page, limit);
+  // `.lean()` drops the `id` virtual; the app keys reviews by it.
+  return paginate(
+    items.map((item) => ({ ...item, id: String(item._id) })),
+    total,
+    page,
+    limit,
+  );
 };
 
 export const listForMaster = (masterId: string, page: number, limit: number): Promise<Paginated<IReview>> =>

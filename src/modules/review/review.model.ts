@@ -62,4 +62,10 @@ reviewSchema.index(
   { unique: true, partialFilterExpression: { order: { $exists: true } } },
 );
 
+/** One review per author per product — the service checks first, this stops a race. */
+reviewSchema.index(
+  { author: 1, targetType: 1, target: 1 },
+  { unique: true, partialFilterExpression: { targetType: ReviewTarget.PRODUCT } },
+);
+
 export const Review = model<IReview, ReviewModel>('Review', reviewSchema);

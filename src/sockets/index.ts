@@ -5,10 +5,11 @@ import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { createQueueConnection } from '../config/redis';
 import { verifyAccessToken } from '../common/utils/token';
+import { isRevoked } from '../common/middlewares/auth.middleware';
 import { UserRole, type AuthenticatedUser } from '../common/types';
 import { canAccessChat, markRead } from '../modules/chat/chat.service';
 import { setOnline } from '../modules/user/user.service';
-import { outstandingOfferFor } from '../modules/matching/matching.service';
+import { resumableOfferFor } from '../modules/matching/matching.service';
 import { registerSocketServer } from './emitter';
 import { room, SocketEvent, type TypingPayload } from './events';
 
@@ -49,13 +50,23 @@ export const initSocketServer = (httpServer: HttpServer): Server => {
       return;
     }
 
+    let payload: ReturnType<typeof verifyAccessToken>;
     try {
-      const payload = verifyAccessToken(token);
-      (socket as AuthedSocket).user = { id: payload.sub, role: payload.role };
-      next();
+      payload = verifyAccessToken(token);
     } catch {
       next(new Error('Authentication token is invalid'));
+      return;
     }
+
+    // A blocked or signed-out user's old token must not reconnect either.
+    void isRevoked(payload).then((revoked) => {
+      if (revoked) {
+        next(new Error('This session has been ended'));
+        return;
+      }
+      (socket as AuthedSocket).user = { id: payload.sub, role: payload.role };
+      next();
+    });
   });
 
   io.on('connection', (socket) => {
@@ -75,16 +86,13 @@ export const initSocketServer = (httpServer: HttpServer): Server => {
 
       // A pro who reconnects mid-offer must see it again — the phone may have
       // rung while the app was closed.
-      void outstandingOfferFor(user.id).then((offer) => {
-        if (offer) {
-          socket.emit(SocketEvent.ORDER_OFFER, {
-            orderId: offer.orderId,
-            expiresAt: new Date(offer.expiresAt).toISOString(),
-            expiresInSeconds: Math.max(0, Math.round((offer.expiresAt - Date.now()) / 1_000)),
-            resumed: true,
-          });
-        }
-      });
+      // It carries the whole card — title, client, fee — not just the id, so the
+      // offer screen can render it without a second request.
+      void resumableOfferFor(user.id)
+        .then((offer) => {
+          if (offer) socket.emit(SocketEvent.ORDER_OFFER, offer);
+        })
+        .catch(() => undefined);
     }
 
     socket.emit(SocketEvent.CONNECTED, { userId: user.id, role: user.role });

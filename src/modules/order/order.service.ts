@@ -3,12 +3,13 @@ import mongoose, { type FilterQuery } from 'mongoose';
 import { env } from '../../config/env';
 import { logger } from '../../config/logger';
 import { ConflictError, ForbiddenError, NotFoundError } from '../../common/errors/ApiError';
-import { OrderStatus, UserRole, type Paginated } from '../../common/types';
+import { NotificationType, OrderStatus, UserRole, type Paginated } from '../../common/types';
 import { paginate } from '../../common/utils/http';
 import { emitToUser } from '../../sockets/emitter';
 import { SocketEvent } from '../../sockets/events';
 import { MasterProfile } from '../user/masterProfile.model';
 import { Chat } from '../chat/chat.model';
+import { notify } from '../notification/notification.service';
 import { abortMatching, startMatching } from '../matching/matching.service';
 import { CATEGORY_CRAFTS } from '../matching/matching.types';
 import { Order, type IOrder, type OrderDocument } from './order.model';
@@ -166,9 +167,14 @@ export const feedForMaster = async (
   const skip = (page - 1) * limit;
 
   const [items, total] = await Promise.all([
-    populated(Order.find(filter)).sort({ createdAt: -1 }).skip(skip).limit(limit).exec() as Promise<
-      OrderDocument[]
-    >,
+    // No phone number here: the pro has not paid for this job, and the client's
+    // number is exactly what the fee buys. It appears once they accept.
+    Order.find(filter)
+      .populate('client', 'firstName lastName avatarUrl')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .exec(),
     Order.countDocuments(filter),
   ]);
 
@@ -200,11 +206,24 @@ export const cancelOrder = async (
 
   const wasSearching = order.status === OrderStatus.MATCHING || order.status === OrderStatus.PENDING;
 
-  order.status = OrderStatus.CANCELLED;
-  order.cancelReason = input.reason;
-  order.cancelledBy = role;
-  order.cancelledAt = new Date();
-  await order.save();
+  // Conditional on the status just read: a pro accepting in the same instant
+  // moves the job on, and a plain save would then overwrite their paid
+  // acceptance with a cancellation.
+  const cancelled = await Order.findOneAndUpdate(
+    { _id: order._id, status: order.status },
+    {
+      $set: {
+        status: OrderStatus.CANCELLED,
+        cancelReason: input.reason,
+        cancelledBy: role,
+        cancelledAt: new Date(),
+      },
+    },
+    { new: true },
+  );
+  if (!cancelled) {
+    throw new ConflictError('The job changed while you were cancelling it — reload and try again', 'ORDER_CHANGED');
+  }
 
   if (wasSearching) await abortMatching(orderId);
 
@@ -220,13 +239,20 @@ export const cancelOrder = async (
   if (other) {
     emitToUser(other, SocketEvent.ORDER_CANCELLED, {
       orderId,
-      reason: order.cancelReason,
+      reason: cancelled.cancelReason,
       cancelledBy: role,
     });
+    // The socket only reaches an open app; the notification also pushes.
+    await notify({
+      userId: other,
+      type: NotificationType.ORDER_CANCELLED,
+      orderId,
+      data: { orderId },
+    }).catch(() => undefined);
   }
 
   logger.info('Job cancelled', { orderId, by: role, userId });
-  return order;
+  return cancelled;
 };
 
 /** The pro marks the work done; this is what opens the client's rating sheet. */
@@ -255,6 +281,14 @@ export const completeOrder = async (orderId: string, masterId: string): Promise<
     title: order.title,
     masterId,
   });
+  // This is what asks the client to rate the pro, so it must arrive even when
+  // the app is closed.
+  await notify({
+    userId: order.client.toString(),
+    type: NotificationType.ORDER_COMPLETED,
+    orderId,
+    data: { orderId },
+  }).catch(() => undefined);
 
   logger.info('Job completed', { orderId, masterId });
   return order;

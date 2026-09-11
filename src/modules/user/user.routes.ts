@@ -10,11 +10,21 @@ const updateProfileSchema = z.object({
   firstName: z.string().trim().min(2).max(50).optional(),
   lastName: z.string().trim().min(2).max(50).optional(),
   language: z.nativeEnum(Language).optional(),
-  avatarUrl: z.string().url().optional(),
+  // `.url()` alone also passes `javascript:` links.
+  avatarUrl: z
+    .string()
+    .url()
+    .refine((url) => /^https?:\/\//i.test(url), 'Must be an http(s) link')
+    .optional(),
 });
 
 const updateMasterSchema = z.object({
-  crafts: z.array(z.nativeEnum(Craft)).min(1).max(12).optional(),
+  crafts: z
+    .array(z.nativeEnum(Craft))
+    .min(1)
+    .max(12)
+    .refine((crafts) => new Set(crafts).size === crafts.length, 'Each trade can be picked once')
+    .optional(),
   about: z.string().trim().max(1000).optional(),
   regions: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   location: z.tuple([z.number().min(-180).max(180), z.number().min(-90).max(90)]).optional(),

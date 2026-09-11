@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { ForbiddenError, NotFoundError } from '../../common/errors/ApiError';
+import { ConflictError, ForbiddenError, NotFoundError } from '../../common/errors/ApiError';
 import { NotificationType, type Paginated } from '../../common/types';
 import { paginate } from '../../common/utils/http';
 import { emitToChat, emitToUser } from '../../sockets/emitter';
@@ -19,6 +19,12 @@ const idOf = (value: unknown): string => {
   return String(value);
 };
 
+/**
+ * A chat exists only once a pro has paid to accept the job, so the two people in
+ * it may see each other's number — that is what the call button dials.
+ */
+const PARTICIPANT_FIELDS = 'firstName lastName avatarUrl lastSeenAt phone';
+
 const assertParticipant = (chat: ChatDocument, userId: string): void => {
   const isParticipant = chat.participants.some((participant) => idOf(participant) === userId);
   if (!isParticipant) throw new ForbiddenError('This conversation is not yours', 'CHAT_FORBIDDEN');
@@ -27,14 +33,14 @@ const assertParticipant = (chat: ChatDocument, userId: string): void => {
 export const listChats = async (userId: string): Promise<ChatDocument[]> =>
   Chat.find({ participants: userId })
     .sort({ lastMessageAt: -1, createdAt: -1 })
-    .populate('participants', 'firstName lastName avatarUrl lastSeenAt')
+    .populate('participants', PARTICIPANT_FIELDS)
     .populate('order', 'code title status')
     .populate('lastMessage', 'text kind sender createdAt')
     .exec();
 
 export const getChat = async (chatId: string, userId: string): Promise<ChatDocument> => {
   const chat = await Chat.findById(chatId)
-    .populate('participants', 'firstName lastName avatarUrl lastSeenAt')
+    .populate('participants', PARTICIPANT_FIELDS)
     .populate('order', 'code title status');
 
   if (!chat) throw new NotFoundError('Chat');
@@ -44,7 +50,7 @@ export const getChat = async (chatId: string, userId: string): Promise<ChatDocum
 
 export const getChatByOrder = async (orderId: string, userId: string): Promise<ChatDocument> => {
   const chat = await Chat.findOne({ order: orderId })
-    .populate('participants', 'firstName lastName avatarUrl lastSeenAt')
+    .populate('participants', PARTICIPANT_FIELDS)
     .populate('order', 'code title status');
 
   if (!chat) throw new NotFoundError('Chat');
@@ -73,7 +79,13 @@ export const listMessages = async (
     Message.countDocuments({ chat: chatId }),
   ]);
 
-  return paginate(items, total, page, limit);
+  // `.lean()` drops the `id` virtual; the app keys messages by it.
+  return paginate(
+    items.map((item) => ({ ...item, id: String(item._id) })),
+    total,
+    page,
+    limit,
+  );
 };
 
 export type SendMessageInput = {
@@ -90,6 +102,8 @@ export const sendMessage = async (
   const chat = await Chat.findById(chatId);
   if (!chat) throw new NotFoundError('Chat');
   assertParticipant(chat, senderId);
+  // A cancelled job closes its chat; the composer is disabled, and so is the API.
+  if (chat.isClosed) throw new ConflictError('This conversation is closed', 'CHAT_CLOSED');
 
   const message = await Message.create({
     chat: chat._id,
