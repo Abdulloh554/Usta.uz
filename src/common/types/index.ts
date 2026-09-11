@@ -31,6 +31,8 @@ export const TransactionType = {
   ORDER_FEE: 'order_fee',
   REFUND: 'refund',
   PAYOUT: 'payout',
+  /** A manual correction made from the admin panel, signed like any other amount. */
+  ADJUSTMENT: 'adjustment',
 } as const;
 export type TransactionType = (typeof TransactionType)[keyof typeof TransactionType];
 
@@ -60,6 +62,8 @@ export const NotificationType = {
   NEW_MESSAGE: 'new_message',
   REVIEW_RECEIVED: 'review_received',
   WALLET_TOPPED_UP: 'wallet_topped_up',
+  /** A message the team broadcasts from the admin panel. */
+  ANNOUNCEMENT: 'announcement',
 } as const;
 export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType];
 

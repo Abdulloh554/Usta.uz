@@ -28,6 +28,8 @@ import type {
 } from './auth.validator';
 import type { AuthResult, PhoneCheckResult, PublicUser } from './auth.types';
 
+const MASTER_SIGNUP_BONUS = 100_000;
+
 export const toPublicUser = (user: UserDocument): PublicUser => ({
   id: user.id as string,
   phone: user.phone,
@@ -107,6 +109,9 @@ export const register = async (input: RegisterInput): Promise<AuthResult> => {
     language: input.language ?? Language.UZ,
     acceptedRulesAt: new Date(),
     isPhoneVerified: false,
+    // Temporary sign-up bonus so a new pro can accept their first job without
+    // topping up first — Payme/Click are not wired up yet.
+    balance: input.role === UserRole.MASTER ? MASTER_SIGNUP_BONUS : 0,
   });
 
   if (input.role === UserRole.MASTER) {

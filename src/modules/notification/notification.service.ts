@@ -50,6 +50,12 @@ const COPY: Record<NotificationType, Record<Language, { title: string; body: str
     ru: { title: 'Баланс пополнен', body: 'Ваш счёт пополнен.' },
     en: { title: 'Wallet topped up', body: 'Your balance has been credited.' },
   },
+  // Broadcasts always carry their own title and body; this is only the fallback.
+  [NotificationType.ANNOUNCEMENT]: {
+    uz: { title: 'Usta.uz', body: 'Jamoamizdan yangi xabar.' },
+    ru: { title: 'Usta.uz', body: 'Новое сообщение от команды.' },
+    en: { title: 'Usta.uz', body: 'A new message from the team.' },
+  },
 };
 
 export type NotifyInput = {

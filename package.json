@@ -20,7 +20,8 @@
     "test:cov": "jest --coverage --runInBand",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
-    "dev:local": "tsx watch --ignore .mongo-data scripts/dev-with-local-db.ts"
+    "dev:local": "tsx watch --ignore .mongo-data scripts/dev-with-local-db.ts",
+    "admin:create": "tsx scripts/create-admin.ts"
   },
   "dependencies": {
     "@sentry/node": "^10.73.0",

@@ -15,7 +15,7 @@ import { Review, ReviewTarget, type IReview, type ReviewDocument } from './revie
  * hidden or deleted review — the rules promise bought ratings are removed —
  * corrects the average instead of leaving it permanently skewed.
  */
-const recomputeRating = async (
+export const recomputeRating = async (
   targetType: ReviewTarget,
   targetId: mongoose.Types.ObjectId,
 ): Promise<{ rating: number; ratingCount: number }> => {
