@@ -65,6 +65,12 @@ const schema = z.object({
   FCM_PRIVATE_KEY: z.string().default(''),
 
   MATCH_OFFER_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(45),
+  /**
+   * How long after a pro's last activity they still count as reachable. Closing
+   * the app drops the socket, but the push notification is exactly what should
+   * reach them then — so a recently-seen pro stays in the candidate list.
+   */
+  MATCH_OFFLINE_GRACE_MINUTES: z.coerce.number().int().nonnegative().default(30),
   MATCH_MAX_CANDIDATES: z.coerce.number().int().positive().default(20),
   MATCH_RADIUS_KM: z.coerce.number().positive().default(15),
 

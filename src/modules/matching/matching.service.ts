@@ -29,7 +29,8 @@ const OFFER_TIMEOUT = env.MATCH_OFFER_TIMEOUT_SECONDS;
 /**
  * Ranks the pros who could take this job.
  *
- * Filters: trade matches the job category, the pro is online and available, and
+ * Filters: trade matches the job category, the pro is available and either
+ * connected or seen within `MATCH_OFFLINE_GRACE_MINUTES`, and
  * their balance covers the acceptance fee — the design tells pros a job is only
  * offered when they can actually pay for it. Sorted by rating descending, so the
  * best-rated pro sees it first.
@@ -42,11 +43,14 @@ export const buildCandidates = async (order: OrderDocument): Promise<MatchCandid
   const crafts = CATEGORY_CRAFTS[order.category];
   const fee = env.ORDER_ACCEPT_FEE;
 
+  // Online state is checked after the lookup, so a pro who closed the app a few
+  // minutes ago is still reachable — by push, which is the point of having it.
   const baseMatch: Record<string, unknown> = {
     crafts: { $in: crafts },
-    isOnline: true,
     isAvailable: true,
   };
+
+  const seenSince = new Date(Date.now() - env.MATCH_OFFLINE_GRACE_MINUTES * 60_000);
 
   const hasLocation = Array.isArray(order.location?.coordinates) && order.location.coordinates.length === 2;
 
@@ -74,12 +78,15 @@ export const buildCandidates = async (order: OrderDocument): Promise<MatchCandid
         as: 'account',
         pipeline: [
           { $match: { isActive: true, isBlocked: false, role: UserRole.MASTER } },
-          { $project: { balance: 1 } },
+          { $project: { balance: 1, lastSeenAt: 1 } },
         ],
       },
     },
     { $unwind: '$account' },
     { $match: { 'account.balance': { $gte: fee } } },
+    // Connected right now, or seen within the grace window — `setOnline` writes
+    // `lastSeenAt` on disconnect, so this is "closed the app recently".
+    { $match: { $or: [{ isOnline: true }, { 'account.lastSeenAt': { $gte: seenSince } }] } },
     // The client should never be offered their own job, in the case where one
     // person holds both roles.
     { $match: { user: { $ne: order.client } } },

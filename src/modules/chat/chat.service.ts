@@ -145,7 +145,9 @@ export const sendMessage = async (
       type: NotificationType.NEW_MESSAGE,
       chatId,
       body: message.kind === MessageKind.TEXT ? message.text.slice(0, 120) : undefined,
-      data: { chatId },
+      // The app routes conversations by job id, so the push carries it too —
+      // tapping the notification has to open the chat, not just the app.
+      data: { chatId, orderId: chat.order.toString() },
     }).catch(() => undefined);
   }
 

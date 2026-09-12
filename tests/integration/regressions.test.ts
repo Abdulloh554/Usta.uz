@@ -11,7 +11,12 @@ import { Review, ReviewTarget } from '../../src/modules/review/review.model';
 import { Transaction } from '../../src/modules/wallet/transaction.model';
 import { Notification } from '../../src/modules/notification/notification.model';
 import { rateProduct } from '../../src/modules/review/review.service';
-import { acceptOffer, resumableOfferFor, startMatching } from '../../src/modules/matching/matching.service';
+import {
+  abortMatching,
+  acceptOffer,
+  resumableOfferFor,
+  startMatching,
+} from '../../src/modules/matching/matching.service';
 import { env } from '../../src/config/env';
 import { keys, redis } from '../../src/config/redis';
 import { NotFoundError } from '../../src/common/errors/ApiError';
@@ -322,6 +327,22 @@ describe('regressions found in role QA', () => {
 
       expect(state.current).toBeNull();
       expect((await Order.findById(order._id))!.offers).toHaveLength(0);
+    });
+
+    it('still offers to a pro who closed the app, until the grace window passes', async () => {
+      const client = await makeClient();
+      const master = await makeMaster({ isOnline: false });
+      const order = await makeOrder(client._id);
+
+      // Closed the app five minutes ago: the socket is gone, the push is not.
+      await User.updateOne({ _id: master._id }, { lastSeenAt: new Date(Date.now() - 5 * 60_000) });
+      expect((await startMatching(order.id as string)).current).toBe(master.id);
+
+      // Two hours ago: past the window, so the job does not wait on them.
+      await abortMatching(order.id as string);
+      await Order.updateOne({ _id: order._id }, { status: OrderStatus.PENDING, offers: [] });
+      await User.updateOne({ _id: master._id }, { lastSeenAt: new Date(Date.now() - 120 * 60_000) });
+      expect((await startMatching(order.id as string)).current).toBeNull();
     });
 
     it('hands a reconnecting pro the whole offer card, not just its id', async () => {
