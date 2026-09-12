@@ -19,6 +19,8 @@ export interface IUser {
   isActive: boolean;
   isBlocked: boolean;
   blockReason?: string;
+  /** Set when the person deleted their own account; their details are scrubbed. */
+  deletedAt?: Date;
   acceptedRulesAt?: Date;
   pushTokens: string[];
   lastSeenAt?: Date;
@@ -86,6 +88,7 @@ const userSchema = new Schema<IUser, UserModel, IUserMethods>(
     isActive: { type: Boolean, default: true },
     isBlocked: { type: Boolean, default: false },
     blockReason: { type: String, trim: true, maxlength: 300 },
+    deletedAt: { type: Date },
     acceptedRulesAt: { type: Date },
     pushTokens: { type: [String], default: [] },
     lastSeenAt: { type: Date },

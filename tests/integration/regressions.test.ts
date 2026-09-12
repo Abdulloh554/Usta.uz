@@ -3,6 +3,7 @@ import type { Express } from 'express';
 import { createApp } from '../../src/app';
 import { Order } from '../../src/modules/order/order.model';
 import { User } from '../../src/modules/user/user.model';
+import { MasterProfile } from '../../src/modules/user/masterProfile.model';
 import { AdminAction, AdminLog } from '../../src/modules/admin/adminLog.model';
 import { Chat, Message } from '../../src/modules/chat/chat.model';
 import { Product } from '../../src/modules/product/product.model';
@@ -398,6 +399,74 @@ describe('regressions found in role QA', () => {
 
       expect(response.status).toBe(403);
       expect(response.body.error.code).toBe('PAYMENTS_DISABLED');
+    });
+  });
+
+  describe('deleting your own account', () => {
+    it('scrubs the person, keeps their history and frees the number', async () => {
+      const master = await makeMaster();
+      const seller = await makeSeller();
+      const product = await Product.create({ seller: seller._id, title: 'Drel', price: 100 });
+      const auth = bearer(master.id as string, UserRole.MASTER);
+
+      await request(app).post(`${PREFIX}/products/${product.id}/favorite`).set('Authorization', auth);
+      const order = await makeOrder(master._id, { status: OrderStatus.DONE });
+
+      const response = await request(app)
+        .delete(`${PREFIX}/users/me`)
+        .set('Authorization', auth)
+        .send({ password: 'secret123' });
+      expect(response.status).toBe(200);
+
+      const scrubbed = await User.findById(master._id);
+      expect(scrubbed!.phone).toBe(`deleted:${String(master._id)}`);
+      expect(scrubbed!.firstName).toBe('Oʻchirilgan');
+      expect(scrubbed!.isActive).toBe(false);
+      expect(scrubbed!.deletedAt).toBeInstanceOf(Date);
+      expect(await MasterProfile.countDocuments({ user: master._id })).toBe(0);
+
+      // The job stays — it is the other side's history too.
+      expect(await Order.findById(order._id)).not.toBeNull();
+
+      // The session ends immediately, not in 15 minutes.
+      const after = await request(app).get(`${PREFIX}/auth/me`).set('Authorization', auth);
+      expect(after.status).toBe(401);
+
+      // And the number can sign up again.
+      const reused = await request(app).post(`${PREFIX}/auth/register`).send({
+        firstName: 'Yangi',
+        lastName: 'Foydalanuvchi',
+        phone: master.phone,
+        password: 'secret123',
+        confirmPassword: 'secret123',
+        role: UserRole.CLIENT,
+        acceptedRules: true,
+      });
+      expect(reused.status).toBe(201);
+    });
+
+    it('refuses a wrong password', async () => {
+      const client = await makeClient();
+      const response = await request(app)
+        .delete(`${PREFIX}/users/me`)
+        .set('Authorization', bearer(client.id as string, UserRole.CLIENT))
+        .send({ password: 'not-my-password' });
+
+      expect(response.status).toBe(401);
+      expect((await User.findById(client._id))!.deletedAt).toBeUndefined();
+    });
+
+    it('asks for the active job to be finished first', async () => {
+      const client = await makeClient();
+      await makeOrder(client._id);
+
+      const response = await request(app)
+        .delete(`${PREFIX}/users/me`)
+        .set('Authorization', bearer(client.id as string, UserRole.CLIENT))
+        .send({ password: 'secret123' });
+
+      expect(response.status).toBe(409);
+      expect(response.body.error.code).toBe('ACTIVE_ORDER_EXISTS');
     });
   });
 
