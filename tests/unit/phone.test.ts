@@ -20,6 +20,17 @@ describe('phone utilities', () => {
       expect(toNationalDigits('')).toBe('');
       expect(toNationalDigits('abc')).toBe('');
     });
+
+    /**
+     * 99 830 38 23 is a real Uzmobile number whose national form starts with the
+     * country code. Stripping unconditionally cut it to `303823` and sign-up
+     * rejected it.
+     */
+    it('keeps a national number that itself begins with 998', () => {
+      expect(toNationalDigits('998303823')).toBe('998303823');
+      expect(toNationalDigits('+998998303823')).toBe('998303823');
+      expect(toNationalDigits('+998 99 830 38 23')).toBe('998303823');
+    });
   });
 
   describe('operatorOf', () => {
@@ -51,6 +62,13 @@ describe('phone utilities', () => {
 
     it('rejects an unknown operator code', () => {
       expect(isValidUzPhone('+998121234567')).toBe(false);
+    });
+
+    it('accepts a number whose national part starts with 998', () => {
+      expect(operatorOf('+998998303823')).toBe('Uzmobile');
+      expect(isValidUzPhone('+998998303823')).toBe(true);
+      expect(isValidUzPhone('998303823')).toBe(true);
+      expect(normalizePhone('+998 99 830 38 23')).toBe('+998998303823');
     });
   });
 

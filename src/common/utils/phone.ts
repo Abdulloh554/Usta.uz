@@ -23,10 +23,20 @@ export const OPERATOR_CODES: Readonly<Record<string, string>> = Object.freeze({
 const COUNTRY_CODE = '998';
 const NATIONAL_LENGTH = 9;
 
-/** Strip everything that is not a digit and drop a leading country code. */
+/**
+ * Strip everything that is not a digit and drop a leading country code — but
+ * only when the country code is genuinely there.
+ *
+ * A national number may itself begin with 998: 99 830 38 23 is `998303823`.
+ * Stripping unconditionally cut that to the six digits `303823`, and because
+ * `operatorOf` and `normalizePhone` strip again on an already-national number,
+ * a real Uzmobile number was rejected as invalid at sign-up.
+ */
 export const toNationalDigits = (input: string): string => {
   const digits = String(input ?? '').replace(/\D/g, '');
-  return digits.startsWith(COUNTRY_CODE) ? digits.slice(COUNTRY_CODE.length) : digits;
+  return digits.length > NATIONAL_LENGTH && digits.startsWith(COUNTRY_CODE)
+    ? digits.slice(COUNTRY_CODE.length)
+    : digits;
 };
 
 export const operatorOf = (input: string): string | null => {
