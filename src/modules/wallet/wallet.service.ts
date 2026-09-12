@@ -1,8 +1,13 @@
 import crypto from 'node:crypto';
 import mongoose from 'mongoose';
-import { env } from '../../config/env';
+import { env, paymentsEnabled } from '../../config/env';
 import { logger } from '../../config/logger';
-import { BadRequestError, ConflictError, NotFoundError } from '../../common/errors/ApiError';
+import {
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+} from '../../common/errors/ApiError';
 import {
   NotificationType,
   PaymentProvider,
@@ -87,6 +92,10 @@ const buildClickUrl = (transactionId: string, amount: number): string => {
  * checkout leaves nothing to reconcile.
  */
 export const startTopUp = async (userId: string, input: TopUpInput): Promise<TopUpResult> => {
+  // Nothing costs money while payments are off, so there is nothing to top up for.
+  if (!paymentsEnabled()) {
+    throw new ForbiddenError('Payments are turned off for now', 'PAYMENTS_DISABLED');
+  }
   if (input.amount < MIN_TOP_UP) {
     throw new BadRequestError(`The smallest top-up is ${MIN_TOP_UP} so'm`, [
       { field: 'amount', message: 'below_minimum' },

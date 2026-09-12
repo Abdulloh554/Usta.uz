@@ -73,8 +73,9 @@ services:
       - key: ESKIZ_FROM
         value: '4546'
 
+      # 0 = payments off for launch; set to 4999 once Payme / Click are live.
       - key: ORDER_ACCEPT_FEE
-        value: '4999'
+        value: '0'
 
   # ─── Redis ───────────────────────────────────────────────────────────────
   - name: ustauz-keyvalue

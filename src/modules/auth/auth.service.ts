@@ -1,5 +1,5 @@
 import { redis, keys } from '../../config/redis';
-import { env } from '../../config/env';
+import { env, paymentsEnabled } from '../../config/env';
 import { logger } from '../../config/logger';
 import { smsProvider } from '../../config/sms';
 import {
@@ -116,9 +116,9 @@ export const register = async (input: RegisterInput): Promise<AuthResult> => {
     language: input.language ?? Language.UZ,
     acceptedRulesAt: new Date(),
     isPhoneVerified: false,
-    // Temporary sign-up bonus so a new pro can accept their first job without
-    // topping up first — Payme/Click are not wired up yet.
-    balance: input.role === UserRole.MASTER ? MASTER_SIGNUP_BONUS : 0,
+    // Sign-up bonus so a new pro can accept their first jobs before topping up.
+    // With payments off, accepting is free and a balance would mean nothing.
+    balance: input.role === UserRole.MASTER && paymentsEnabled() ? MASTER_SIGNUP_BONUS : 0,
   });
 
   // Every so'm in a wallet has a ledger entry, the bonus included — otherwise the

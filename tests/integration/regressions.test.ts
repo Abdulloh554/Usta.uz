@@ -10,7 +10,8 @@ import { Review, ReviewTarget } from '../../src/modules/review/review.model';
 import { Transaction } from '../../src/modules/wallet/transaction.model';
 import { Notification } from '../../src/modules/notification/notification.model';
 import { rateProduct } from '../../src/modules/review/review.service';
-import { resumableOfferFor, startMatching } from '../../src/modules/matching/matching.service';
+import { acceptOffer, resumableOfferFor, startMatching } from '../../src/modules/matching/matching.service';
+import { env } from '../../src/config/env';
 import { keys, redis } from '../../src/config/redis';
 import { NotFoundError } from '../../src/common/errors/ApiError';
 import {
@@ -341,6 +342,62 @@ describe('regressions found in role QA', () => {
         }),
       );
       expect(offer!.expiresInSeconds).toBeGreaterThan(0);
+    });
+  });
+
+  describe('with payments turned off (fee 0)', () => {
+    const settings = env as { ORDER_ACCEPT_FEE: number };
+    let original: number;
+
+    beforeEach(() => {
+      original = settings.ORDER_ACCEPT_FEE;
+      settings.ORDER_ACCEPT_FEE = 0;
+    });
+
+    afterEach(() => {
+      settings.ORDER_ACCEPT_FEE = original;
+    });
+
+    it('lets a pro with an empty wallet accept, and writes no fee', async () => {
+      const client = await makeClient();
+      const master = await makeMaster({ balance: 0 });
+      const order = await makeOrder(client._id);
+
+      expect((await startMatching(order.id as string)).current).toBe(master.id);
+      const result = await acceptOffer(order.id as string, master.id as string);
+
+      expect(result.fee).toBe(0);
+      expect(result.order.status).toBe(OrderStatus.ACCEPTED);
+      expect(result.order.feeTransaction).toBeUndefined();
+      expect(await Transaction.countDocuments({ user: master._id })).toBe(0);
+    });
+
+    it('gives a new pro no bonus and no ledger entry', async () => {
+      const response = await request(app).post(`${PREFIX}/auth/register`).send({
+        firstName: 'Jasur',
+        lastName: 'Aliyev',
+        phone: '+998971119988',
+        password: 'secret123',
+        confirmPassword: 'secret123',
+        role: UserRole.MASTER,
+        acceptedRules: true,
+        crafts: ['plumber'],
+      });
+
+      expect(response.status).toBe(201);
+      expect(response.body.data.user.balance).toBe(0);
+      expect(await Transaction.countDocuments({ user: response.body.data.user.id })).toBe(0);
+    });
+
+    it('refuses top-ups', async () => {
+      const master = await makeMaster();
+      const response = await request(app)
+        .post(`${PREFIX}/wallet/top-up`)
+        .set('Authorization', bearer(master.id as string, UserRole.MASTER))
+        .send({ amount: 10_000, provider: PaymentProvider.PAYME });
+
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe('PAYMENTS_DISABLED');
     });
   });
 

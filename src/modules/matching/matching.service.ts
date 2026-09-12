@@ -408,22 +408,27 @@ export const acceptOffer = async (
       options,
     );
 
-    const [transaction] = await Transaction.create(
-      [
-        {
-          user: new mongoose.Types.ObjectId(masterId),
-          type: TransactionType.ORDER_FEE,
-          status: TransactionStatus.SUCCESS,
-          provider: PaymentProvider.BALANCE,
-          amount: -fee,
-          balanceAfter: account.balance,
-          order: order._id,
-          description: `Job acceptance fee — ${order.code}`,
-          settledAt: acceptedAt,
-        },
-      ],
-      options,
-    );
+    // While payments are off the fee is 0, and a zero-amount ledger entry is
+    // both meaningless and refused by the transaction model.
+    const [transaction] =
+      fee > 0
+        ? await Transaction.create(
+            [
+              {
+                user: new mongoose.Types.ObjectId(masterId),
+                type: TransactionType.ORDER_FEE,
+                status: TransactionStatus.SUCCESS,
+                provider: PaymentProvider.BALANCE,
+                amount: -fee,
+                balanceAfter: account.balance,
+                order: order._id,
+                description: `Job acceptance fee — ${order.code}`,
+                settledAt: acceptedAt,
+              },
+            ],
+            options,
+          )
+        : [null];
 
     const [chat] = await Chat.create(
       [
@@ -436,7 +441,7 @@ export const acceptOffer = async (
       options,
     );
 
-    order.feeTransaction = transaction!._id;
+    if (transaction) order.feeTransaction = transaction._id;
     await order.save(options);
 
     return { order, chatId: (chat!._id).toString() };

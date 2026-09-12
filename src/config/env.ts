@@ -41,8 +41,13 @@ const schema = z.object({
   SMS_CODE_TTL_SECONDS: z.coerce.number().int().positive().default(300),
   SMS_CODE_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
 
-  /** The pro pays this, once, when accepting a job. The app takes no cut of the work itself. */
-  ORDER_ACCEPT_FEE: z.coerce.number().int().nonnegative().default(4999),
+  /**
+   * The pro pays this, once, when accepting a job. The app takes no cut of the
+   * work itself. 0 — the launch default — turns payments off entirely: accepting
+   * is free, there is no sign-up bonus and top-ups are refused. Set it back to
+   * 4999 once Payme / Click are connected.
+   */
+  ORDER_ACCEPT_FEE: z.coerce.number().int().nonnegative().default(0),
   PAYME_MERCHANT_ID: z.string().default(''),
   PAYME_KEY: z.string().default(''),
   PAYME_CHECKOUT_URL: z.string().default('https://checkout.paycom.uz'),
@@ -81,5 +86,8 @@ export const env = parsed.data;
 export const isProduction = env.NODE_ENV === 'production';
 export const isTest = env.NODE_ENV === 'test';
 export const isDevelopment = env.NODE_ENV === 'development';
+
+/** Read on every call rather than captured once, so the switch is a single env var. */
+export const paymentsEnabled = (): boolean => env.ORDER_ACCEPT_FEE > 0;
 
 export type Env = typeof env;
