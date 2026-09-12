@@ -124,6 +124,29 @@ describe('auth routes', () => {
       // Stored canonically regardless of how it was typed.
       expect(response.body.data.user.phone).toBe('+998901234567');
     });
+
+    /**
+     * 99 830 38 23 is a real Uzmobile number whose national part starts with the
+     * country code. Its digits were stripped twice, so sign-up answered
+     * "Validation failed" — the whole flow is covered here, not just the rule.
+     */
+    it('signs up a number whose national part starts with 998, and lets it log back in', async () => {
+      const phone = '+998 99 830 38 23';
+
+      const created = await request(app)
+        .post(`${PREFIX}/auth/register`)
+        .send({ ...clientPayload, phone });
+
+      expect(created.status).toBe(201);
+      expect(created.body.data.user.phone).toBe('+998998303823');
+
+      const session = await request(app)
+        .post(`${PREFIX}/auth/login`)
+        .send({ phone, password: clientPayload.password });
+
+      expect(session.status).toBe(200);
+      expect(session.body.data.accessToken).toEqual(expect.any(String));
+    });
   });
 
   describe('POST /auth/login', () => {
