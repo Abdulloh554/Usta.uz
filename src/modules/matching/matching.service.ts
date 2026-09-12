@@ -5,6 +5,7 @@ import { keys, redis } from '../../config/redis';
 import { supportsTransactions } from '../../config/database';
 import { ConflictError, NotFoundError, PaymentRequiredError } from '../../common/errors/ApiError';
 import {
+  Craft,
   NotificationType,
   OrderStatus,
   PaymentProvider,
@@ -341,6 +342,28 @@ export const expireOffer = async (orderId: string, masterId: string): Promise<Ma
 };
 
 /**
+ * The checks `buildCandidates` makes before a job is ever rung to a pro. An
+ * offer carries them implicitly, a claim straight from the feed does not — so a
+ * pro may only take work in their own trades, and never their own posting.
+ */
+const assertClaimable = async (orderId: string, masterId: string): Promise<void> => {
+  const order = await Order.findById(orderId).select('category client').lean();
+  if (!order) throw new NotFoundError('Order');
+
+  if (order.client.toString() === masterId) {
+    throw new ConflictError('You cannot take your own job', 'OWN_ORDER');
+  }
+
+  const profile = await MasterProfile.findOne({ user: masterId }).select('crafts').lean();
+  if (!profile) throw new NotFoundError('Master profile');
+
+  const crafts: readonly Craft[] = CATEGORY_CRAFTS[order.category];
+  if (!profile.crafts.some((craft) => crafts.includes(craft))) {
+    throw new ConflictError('This job is not in your trades', 'CRAFT_MISMATCH');
+  }
+};
+
+/**
  * The pro accepts, pays the fee and takes the job.
  *
  * Two guards stop a double-accept. First the order update is conditional on the
@@ -355,9 +378,14 @@ export const acceptOffer = async (
   masterId: string,
 ): Promise<{ order: OrderDocument; chatId: string; fee: number }> => {
   const offer = await readOffer(orderId);
-  if (!offer || offer.masterId !== masterId) {
+
+  // While a job is ringing it belongs to the pro it was rung to. Outside those
+  // 45 seconds any eligible pro may take it straight from the feed: the offer
+  // is a fast track to the job, not the only door into it.
+  if (offer && offer.masterId !== masterId) {
     throw new ConflictError('This job has already been taken', 'OFFER_TAKEN');
   }
+  if (!offer) await assertClaimable(orderId, masterId);
 
   const fee = env.ORDER_ACCEPT_FEE;
   const useTransaction = supportsTransactions();

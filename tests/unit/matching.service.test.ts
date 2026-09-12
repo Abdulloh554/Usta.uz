@@ -230,6 +230,45 @@ describe('matching service', () => {
       await expect(acceptOffer(order.id as string, other.id as string)).rejects.toThrow(ConflictError);
     });
 
+    /**
+     * The feed lists every open job in the pro's trades, so a pro who never got
+     * the ring — or let it pass to someone who then declined — can still take
+     * the work from the list. Nothing is ringing here: no offer was ever made.
+     */
+    it('lets a pro claim an open job straight from the feed', async () => {
+      const client = await makeClient();
+      const master = await makeMaster({ balance: 50_000 });
+      const order = await makeOrder(client._id);
+
+      const result = await acceptOffer(order.id as string, master.id as string);
+
+      const reloaded = await Order.findById(order._id);
+      expect(reloaded!.status).toBe(OrderStatus.ACCEPTED);
+      expect(reloaded!.master!.toString()).toBe(master.id);
+      expect(await Chat.findById(result.chatId)).not.toBeNull();
+    });
+
+    it('refuses a claim on a trade the pro does not work in', async () => {
+      const client = await makeClient();
+      const plumber = await makeMaster({ crafts: [Craft.PLUMBER] });
+      // The factory's default job is electrical work.
+      const order = await makeOrder(client._id, { category: OrderCategory.ELECTRICAL });
+
+      await expect(acceptOffer(order.id as string, plumber.id as string)).rejects.toThrow(
+        ConflictError,
+      );
+      expect((await Order.findById(order._id))!.status).toBe(OrderStatus.PENDING);
+    });
+
+    it('refuses a pro claiming a job they posted themselves', async () => {
+      const master = await makeMaster();
+      const order = await makeOrder(master._id);
+
+      await expect(acceptOffer(order.id as string, master.id as string)).rejects.toThrow(
+        ConflictError,
+      );
+    });
+
     it('refuses when the balance dropped below the fee after the offer went out', async () => {
       const client = await makeClient();
       const master = await makeMaster({ balance: 50_000 });
