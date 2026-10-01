@@ -10,7 +10,7 @@ import { SocketEvent } from '../../sockets/events';
 import { User } from '../user/user.model';
 import { getNotificationQueue, NotificationJob } from '../../jobs/queues';
 import { isQueueCapable } from '../../jobs/scheduler';
-import { pushProvider } from '../../config/push';
+import { pushProvider, setStaleTokenHandler } from '../../config/push';
 import { Notification, type NotificationDocument } from './notification.model';
 
 /** Copy for every notification, in the three languages the app ships. */
@@ -164,6 +164,16 @@ export const markAllRead = async (userId: string): Promise<void> => {
     { $set: { isRead: true, readAt: new Date() } },
   );
 };
+
+/**
+ * A push service has said these tokens are gone for good — the browser
+ * unsubscribed, or the person revoked the site's permission. Sending to them
+ * again would only fail again.
+ */
+setStaleTokenHandler(async (tokens) => {
+  await User.updateMany({ pushTokens: { $in: tokens } }, { $pull: { pushTokens: { $in: tokens } } });
+  logger.info('Dropped stale push subscriptions', { count: tokens.length });
+});
 
 /** Device registration — `$addToSet` keeps re-registration idempotent. */
 export const registerDevice = async (userId: string, token: string): Promise<void> => {

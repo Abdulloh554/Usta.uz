@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import webpush from 'web-push';
 import { env } from './env';
 import { logger } from './logger';
 
@@ -159,9 +160,146 @@ class FcmProvider implements PushProvider {
   }
 }
 
+/* ── Web Push, for the web app ──────────────────────────────────────────── */
+
+/**
+ * A browser's push subscription travels as an ordinary device token, so it can
+ * share `User.pushTokens`, the notification queue and broadcasts with phone
+ * tokens unchanged. The prefix tells the two apart; the rest is the
+ * subscription JSON, base64url-encoded so it stays one opaque string.
+ */
+export const WEB_PUSH_PREFIX = 'webpush:';
+
+export const isWebPushToken = (token: string): boolean => token.startsWith(WEB_PUSH_PREFIX);
+
+/**
+ * The browsers' push services. The endpoint comes from the client and this
+ * server POSTs to it, so anything else is refused — otherwise a crafted
+ * "subscription" could aim the API at an internal address.
+ */
+const PUSH_SERVICE_HOSTS = [
+  'fcm.googleapis.com', // Chrome, Edge on Android, Opera, Samsung Internet
+  'updates.push.services.mozilla.com', // Firefox
+  'notify.windows.com', // Edge on Windows (`*.notify.windows.com`)
+  'push.apple.com', // Safari (`web.push.apple.com`)
+];
+
+export const isPushServiceEndpoint = (endpoint: string): boolean => {
+  try {
+    const url = new URL(endpoint);
+    if (url.protocol !== 'https:' || url.port !== '') return false;
+    return PUSH_SERVICE_HOSTS.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`));
+  } catch {
+    return false;
+  }
+};
+
+export const decodeWebPushToken = (token: string): webpush.PushSubscription | null => {
+  try {
+    const json = Buffer.from(token.slice(WEB_PUSH_PREFIX.length), 'base64url').toString('utf8');
+    const subscription = JSON.parse(json) as webpush.PushSubscription;
+    if (typeof subscription.endpoint !== 'string' || !subscription.keys?.p256dh || !subscription.keys?.auth) {
+      return null;
+    }
+    return isPushServiceEndpoint(subscription.endpoint) ? subscription : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Called with tokens a push service has declared dead (the browser
+ * unsubscribed, or the site's permission was revoked), so they can be dropped.
+ * Registered by the notification module, which owns the user documents.
+ */
+let onStaleTokens: ((tokens: string[]) => Promise<void>) | null = null;
+
+export const setStaleTokenHandler = (handler: (tokens: string[]) => Promise<void>): void => {
+  onStaleTokens = handler;
+};
+
+export const webPushEnabled = (): boolean => Boolean(env.WEB_PUSH_PUBLIC_KEY && env.WEB_PUSH_PRIVATE_KEY);
+
+export class WebPushProvider implements PushProvider {
+  public readonly name = 'webpush';
+
+  constructor() {
+    webpush.setVapidDetails(env.WEB_PUSH_SUBJECT, env.WEB_PUSH_PUBLIC_KEY, env.WEB_PUSH_PRIVATE_KEY);
+  }
+
+  // eslint-disable-next-line class-methods-use-this
+  async send(tokens: string[], message: PushMessage): Promise<void> {
+    const payload = JSON.stringify({
+      title: message.title,
+      body: message.body,
+      data: message.data ?? {},
+      ringing: Boolean(message.ringing),
+    });
+    const stale: string[] = [];
+
+    await Promise.all(
+      tokens.map(async (token) => {
+        const subscription = decodeWebPushToken(token);
+        if (!subscription) {
+          stale.push(token);
+          return;
+        }
+        try {
+          await webpush.sendNotification(subscription, payload, {
+            // An offer delivered after its window has closed rings for a job
+            // that is already someone else's — the same rule as on Android.
+            TTL: message.ringing ? 60 : 24 * 60 * 60,
+            urgency: message.ringing ? 'high' : 'normal',
+            topic: message.ringing ? 'offer' : undefined,
+          });
+        } catch (error) {
+          const status = (error as { statusCode?: number }).statusCode;
+          if (status === 404 || status === 410) {
+            stale.push(token);
+            return;
+          }
+          logger.warn('Web push delivery failed', {
+            status,
+            message: error instanceof Error ? error.message.slice(0, 200) : String(error),
+          });
+        }
+      }),
+    );
+
+    if (stale.length > 0 && onStaleTokens) await onStaleTokens(stale).catch(() => undefined);
+  }
+}
+
+/**
+ * Sends each token through the service it belongs to: browser subscriptions
+ * through Web Push, everything else through FCM (or the console in
+ * development). One failing half never stops the other.
+ */
+export class RoutingProvider implements PushProvider {
+  public readonly name: string;
+
+  constructor(
+    private readonly devices: PushProvider,
+    private readonly browsers: PushProvider | null,
+  ) {
+    this.name = browsers ? `${devices.name}+${browsers.name}` : devices.name;
+  }
+
+  async send(tokens: string[], message: PushMessage): Promise<void> {
+    const web = tokens.filter(isWebPushToken);
+    const native = tokens.filter((token) => !isWebPushToken(token));
+
+    await Promise.all([
+      native.length > 0 ? this.devices.send(native, message) : Promise.resolve(),
+      web.length > 0 && this.browsers ? this.browsers.send(web, message) : Promise.resolve(),
+    ]);
+  }
+}
+
 const build = (): PushProvider =>
-  env.FCM_PROJECT_ID && env.FCM_CLIENT_EMAIL && env.FCM_PRIVATE_KEY
-    ? new FcmProvider()
-    : new ConsoleProvider();
+  new RoutingProvider(
+    env.FCM_PROJECT_ID && env.FCM_CLIENT_EMAIL && env.FCM_PRIVATE_KEY ? new FcmProvider() : new ConsoleProvider(),
+    webPushEnabled() ? new WebPushProvider() : null,
+  );
 
 export const pushProvider: PushProvider = build();

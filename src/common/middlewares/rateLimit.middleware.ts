@@ -1,3 +1,5 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
 import type { Request } from 'express';
 import rateLimit, { type Options } from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
@@ -19,6 +21,37 @@ const store = (prefix: string): Options['store'] | undefined =>
         sendCommand: (...args: string[]) => redis.call(...(args as [string, ...string[]])) as Promise<never>,
       });
 
+/** Constant-time, and length-independent because both sides are hashed first. */
+const sameSecret = (offered: string, expected: string): boolean =>
+  timingSafeEqual(
+    createHash('sha256').update(offered).digest(),
+    createHash('sha256').update(expected).digest(),
+  );
+
+/**
+ * The address a request is counted against. Normally `req.ip`; for the web
+ * app's own server — which relays sign-in and refresh for every web visitor —
+ * the visitor's address it forwards, but only alongside the shared secret, so
+ * nobody else can pick the bucket they are counted in.
+ */
+export const clientIp = (req: Request): string => {
+  const secret = env.BFF_SHARED_SECRET;
+  const offered = req.headers['x-bff-secret'];
+  const claimed = req.headers['x-client-ip'];
+
+  if (
+    secret &&
+    typeof offered === 'string' &&
+    typeof claimed === 'string' &&
+    isIP(claimed) !== 0 &&
+    sameSecret(offered, secret)
+  ) {
+    return claimed;
+  }
+
+  return req.ip ?? 'unknown';
+};
+
 /**
  * A signed-in request is counted against the account, anonymous ones against
  * the address.
@@ -29,7 +62,7 @@ const store = (prefix: string): Options['store'] | undefined =>
  * else on that carrier would be refused. The account is the unit the limit is
  * actually about, and it is also the one an attacker cannot rotate for free.
  */
-const keyFor = (req: Request): string => {
+export const keyFor = (req: Request): string => {
   const header = req.headers.authorization;
 
   if (header?.startsWith('Bearer ')) {
@@ -40,7 +73,7 @@ const keyFor = (req: Request): string => {
     }
   }
 
-  const ip = req.ip ?? 'unknown';
+  const ip = clientIp(req);
   // A single IPv6 address is not a meaningful unit — subscribers are handed
   // whole blocks — so the first four groups (the /64) are the subject.
   return `ip:${ip.includes(':') ? ip.split(':').slice(0, 4).join(':') : ip}`;

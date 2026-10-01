@@ -9,8 +9,23 @@ import {
 import { asyncHandler, ok } from '../../common/utils/http';
 import type { AuthenticatedRequest } from '../../common/types';
 import * as notificationService from './notification.service';
+import { decodeWebPushToken, isWebPushToken } from '../../config/push';
+import { env } from '../../config/env';
 
-const deviceSchema = z.object({ token: z.string().trim().min(10).max(500) });
+/**
+ * A phone's FCM token, or a browser's push subscription as `webpush:…` (see
+ * `config/push`). A browser subscription is checked here, at the door: one
+ * that does not decode to a known push service is refused, never stored.
+ */
+const deviceSchema = z.object({
+  token: z
+    .string()
+    .trim()
+    .min(10)
+    .max(2000)
+    .refine((token) => !isWebPushToken(token) || decodeWebPushToken(token) !== null, 'Not a valid push subscription')
+    .refine((token) => isWebPushToken(token) || token.length <= 500, 'Device token is too long'),
+});
 
 export const notificationRouter = Router();
 
@@ -23,6 +38,14 @@ notificationRouter.get(
     const { page, limit } = req.query as unknown as { page: number; limit: number };
     ok(res, await notificationService.listForUser(req.user.id, page, limit));
   }),
+);
+
+/** The VAPID public key the web app subscribes with; `null` while browser push is off. */
+notificationRouter.get(
+  '/web-push/key',
+  (_req, res) => {
+    ok(res, { publicKey: env.WEB_PUSH_PUBLIC_KEY && env.WEB_PUSH_PRIVATE_KEY ? env.WEB_PUSH_PUBLIC_KEY : null });
+  },
 );
 
 notificationRouter.get(

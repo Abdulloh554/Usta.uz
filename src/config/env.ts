@@ -27,6 +27,17 @@ const schema = z.object({
         .map((origin) => origin.trim())
         .filter(Boolean),
     ),
+  /**
+   * Shared with the web app's auth route handlers (`web/src/app/api/auth`).
+   * Those call the API from the web server, so without this every web visitor
+   * would arrive from that one address and share a single rate-limit budget.
+   * A request carrying the secret in `X-BFF-Secret` may name the real client
+   * in `X-Client-IP`; without it, or when unset, that header is ignored.
+   */
+  BFF_SHARED_SECRET: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().min(32, 'BFF_SHARED_SECRET must be at least 32 characters').optional(),
+  ),
 
   /**
    * 0 means one worker per CPU. 1 — the default — keeps the single-process
@@ -107,6 +118,15 @@ const schema = z.object({
   FCM_PROJECT_ID: z.string().default(''),
   FCM_CLIENT_EMAIL: z.string().default(''),
   FCM_PRIVATE_KEY: z.string().default(''),
+  /**
+   * Web Push (VAPID) for the web app. Generate once with
+   * `npx web-push generate-vapid-keys`; empty disables browser push, and
+   * browser subscriptions are then skipped rather than sent anywhere.
+   */
+  WEB_PUSH_PUBLIC_KEY: z.string().default(''),
+  WEB_PUSH_PRIVATE_KEY: z.string().default(''),
+  /** Who push services may contact about this sender — a `mailto:` or `https:` URL. */
+  WEB_PUSH_SUBJECT: z.string().default('mailto:support@usta.uz'),
 
   MATCH_OFFER_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(45),
   /**
