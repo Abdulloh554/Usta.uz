@@ -1,4 +1,4 @@
-# Render blueprint for the Usta.uz API.
+# Render blueprint for the Ustamiz API.
 #
 # This mirrors the live service (Docker runtime, Oregon) so the two do not drift.
 #

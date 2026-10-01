@@ -52,9 +52,9 @@ const COPY: Record<NotificationType, Record<Language, { title: string; body: str
   },
   // Broadcasts always carry their own title and body; this is only the fallback.
   [NotificationType.ANNOUNCEMENT]: {
-    uz: { title: 'Usta.uz', body: 'Jamoamizdan yangi xabar.' },
-    ru: { title: 'Usta.uz', body: 'Новое сообщение от команды.' },
-    en: { title: 'Usta.uz', body: 'A new message from the team.' },
+    uz: { title: 'Ustamiz', body: 'Jamoamizdan yangi xabar.' },
+    ru: { title: 'Ustamiz', body: 'Новое сообщение от команды.' },
+    en: { title: 'Ustamiz', body: 'A new message from the team.' },
   },
 };
 

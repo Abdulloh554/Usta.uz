@@ -2,7 +2,7 @@
   "name": "@ustauz/server",
   "version": "1.0.0",
   "private": true,
-  "description": "Usta.uz API — service marketplace for Uzbekistan",
+  "description": "Ustamiz API — service marketplace for Uzbekistan",
   "main": "dist/server.js",
   "engines": {
     "node": ">=20.11.0"

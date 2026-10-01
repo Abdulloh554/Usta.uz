@@ -49,7 +49,7 @@ const start = async (): Promise<void> => {
   await startWorkers();
 
   server.listen(env.PORT, () => {
-    logger.info(`Usta.uz API listening on port ${env.PORT}`, {
+    logger.info(`Ustamiz API listening on port ${env.PORT}`, {
       env: env.NODE_ENV,
       prefix: env.API_PREFIX,
       pid: process.pid,

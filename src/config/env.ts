@@ -126,7 +126,7 @@ const schema = z.object({
   WEB_PUSH_PUBLIC_KEY: z.string().default(''),
   WEB_PUSH_PRIVATE_KEY: z.string().default(''),
   /** Who push services may contact about this sender — a `mailto:` or `https:` URL. */
-  WEB_PUSH_SUBJECT: z.string().default('mailto:support@usta.uz'),
+  WEB_PUSH_SUBJECT: z.string().default('mailto:support@ustamiz.uz'),
 
   MATCH_OFFER_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(45),
   /**
