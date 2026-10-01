@@ -11,5 +11,9 @@ process.env.BCRYPT_ROUNDS = '4';
 process.env.SMS_PROVIDER = 'console';
 process.env.ORDER_ACCEPT_FEE = '4999';
 process.env.MATCH_OFFER_TIMEOUT_SECONDS = '45';
+// Off unless a test turns them on: a developer's `.env` must not leak keys in.
+process.env.WEB_PUSH_PUBLIC_KEY = '';
+process.env.WEB_PUSH_PRIVATE_KEY = '';
+process.env.BFF_SHARED_SECRET = '';
 
 export {};
