@@ -1,6 +1,7 @@
 import mongoose, { type PipelineStage } from 'mongoose';
-import { env } from '../../config/env';
+import { env, isTest } from '../../config/env';
 import { redis } from '../../config/redis';
+import { cached } from '../../common/utils/cache';
 import {
   OrderCategory,
   OrderStatus,
@@ -33,6 +34,9 @@ export const startOfTashkentDay = (at: Date = new Date()): Date =>
 const dayKey = (at: Date): string => new Date(at.getTime() + TZ_OFFSET_MS).toISOString().slice(0, 10);
 
 const daysAgo = (days: number): Date => new Date(startOfTashkentDay().getTime() - days * DAY_MS);
+
+/** The suite asserts on live figures, so it reads straight through the cache. */
+const cacheSeconds = (): number => (isTest ? 0 : env.STATS_CACHE_SECONDS);
 
 type CountRow = { _id: string; count: number };
 type SumRow = { _id: string | null; total: number; count: number };
@@ -101,7 +105,7 @@ export type Overview = {
   reviews: { total: number; hidden: number; averageStars: number };
 };
 
-export const overview = async (): Promise<Overview> => {
+const loadOverview = async (): Promise<Overview> => {
   const today = startOfTashkentDay();
   const week = daysAgo(7);
   const month = daysAgo(30);
@@ -240,6 +244,17 @@ export const overview = async (): Promise<Overview> => {
   };
 };
 
+/**
+ * Every figure on the dashboard is a count or a sum over a whole collection, and
+ * there are more than thirty of them behind one screen. Uncached, an admin
+ * leaving that screen open — or a few admins refreshing it — is the heaviest
+ * read the database takes, and it competes with the request path for the same
+ * connections. The numbers are a management overview, so a short window of
+ * staleness costs nothing.
+ */
+export const overview = (): Promise<Overview> =>
+  cached('cache:stats:overview', cacheSeconds(), loadOverview);
+
 export type TimeseriesPoint = {
   date: string;
   users: number;
@@ -276,7 +291,7 @@ const dailySums = async (since: Date, match: Record<string, unknown>): Promise<M
 };
 
 /** One row per Tashkent day, oldest first, with zeros where nothing happened. */
-export const timeseries = async (days: number): Promise<TimeseriesPoint[]> => {
+const loadTimeseries = async (days: number): Promise<TimeseriesPoint[]> => {
   const since = daysAgo(days - 1);
 
   const [users, orders, completed, fees, refunds, topUps, messages] = await Promise.all([
@@ -307,6 +322,9 @@ export const timeseries = async (days: number): Promise<TimeseriesPoint[]> => {
     };
   });
 };
+
+export const timeseries = (days: number): Promise<TimeseriesPoint[]> =>
+  cached(`cache:stats:timeseries:${days}`, cacheSeconds(), () => loadTimeseries(days));
 
 export type TopMasterRow = {
   id: string;

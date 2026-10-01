@@ -77,7 +77,6 @@ const orderSchema = new Schema<IOrder, OrderModel>(
       type: String,
       enum: Object.values(OrderStatus),
       default: OrderStatus.PENDING,
-      index: true,
     },
     address: { type: String, trim: true, maxlength: 300 },
     region: { type: String, trim: true, index: true },
@@ -112,6 +111,13 @@ orderSchema.index({ client: 1, status: 1, createdAt: -1 });
 orderSchema.index({ master: 1, status: 1, createdAt: -1 });
 orderSchema.index({ category: 1, status: 1, createdAt: -1 });
 orderSchema.index({ location: '2dsphere' });
+/**
+ * The admin list filters by status and sorts by date, and the dashboard counts
+ * jobs per day. A leading-prefix index serves a query on `status` alone too,
+ * which is why the field itself carries no separate index.
+ */
+orderSchema.index({ status: 1, createdAt: -1 });
+orderSchema.index({ createdAt: -1 });
 
 /** A cancelled job must carry its reason — the rules screen promises this to both sides. */
 orderSchema.pre('validate', function requireCancelReason(next) {

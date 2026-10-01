@@ -8,7 +8,7 @@ import { verifyAccessToken } from '../common/utils/token';
 import { isRevoked } from '../common/middlewares/auth.middleware';
 import { UserRole, type AuthenticatedUser } from '../common/types';
 import { canAccessChat, markRead } from '../modules/chat/chat.service';
-import { setOnline } from '../modules/user/user.service';
+import { setOnline, trackSocket } from '../modules/user/user.service';
 import { resumableOfferFor } from '../modules/matching/matching.service';
 import { registerSocketServer } from './emitter';
 import { room, SocketEvent, type TypingPayload } from './events';
@@ -25,6 +25,13 @@ export const initSocketServer = (httpServer: HttpServer): Server => {
     // client before a job offer is wasted on it.
     pingInterval: 20_000,
     pingTimeout: 20_000,
+    /**
+     * With more than one instance behind a load balancer, a polling client's
+     * requests can land on different replicas and its handshake breaks, because
+     * nothing here pins a session to an instance. Restricting this to
+     * `websocket` removes the need for sticky sessions altogether.
+     */
+    transports: env.SOCKET_TRANSPORTS.length > 0 ? env.SOCKET_TRANSPORTS : ['websocket', 'polling'],
   });
 
   /**
@@ -75,6 +82,7 @@ export const initSocketServer = (httpServer: HttpServer): Server => {
     // Every device the user is signed in on shares one room, so an event
     // reaches their phone and tablet alike.
     void socket.join(room.user(user.id));
+    void trackSocket(user.id, 'connect').catch(() => undefined);
 
     if (user.role === UserRole.MASTER) {
       void setOnline(user.id, true).catch((error: unknown) => {
@@ -129,18 +137,14 @@ export const initSocketServer = (httpServer: HttpServer): Server => {
     socket.on('disconnect', (reason) => {
       logger.debug('Socket disconnected', { userId: user.id, reason });
 
-      if (user.role === UserRole.MASTER) {
-        // Only the last device going away takes the pro offline; otherwise
-        // closing one of two open sessions would stop their offers.
-        void io
-          .in(room.user(user.id))
-          .fetchSockets()
-          .then((sockets) => {
-            if (sockets.length === 0) return setOnline(user.id, false);
-            return undefined;
-          })
-          .catch(() => undefined);
-      }
+      void trackSocket(user.id, 'disconnect')
+        .then(({ remaining }) => {
+          // Only the last device going away takes the pro offline; otherwise
+          // closing one of two open sessions would stop their offers.
+          if (user.role === UserRole.MASTER && remaining === 0) return setOnline(user.id, false);
+          return undefined;
+        })
+        .catch(() => undefined);
     });
   });
 

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate, authorize } from '../../common/middlewares/auth.middleware';
 import { paginationSchema, validate } from '../../common/middlewares/validate.middleware';
+import { webhookLimiter } from '../../common/middlewares/rateLimit.middleware';
 import { asyncHandler, ok } from '../../common/utils/http';
 import {
   PaymentProvider,
@@ -59,6 +60,7 @@ walletRouter.post(
  */
 walletRouter.post(
   '/callback/click',
+  webhookLimiter,
   asyncHandler(async (req, res) => {
     const body = req.body as Record<string, string>;
 
@@ -98,6 +100,6 @@ walletRouter.post(
  * Payme's Merchant API is a single JSON-RPC endpoint; the handler owns its own
  * error envelope, so it is mounted directly rather than through `asyncHandler`.
  */
-walletRouter.post('/callback/payme', (req, res, next) => {
+walletRouter.post('/callback/payme', webhookLimiter, (req, res, next) => {
   void paymeCallback(req, res).catch(next);
 });

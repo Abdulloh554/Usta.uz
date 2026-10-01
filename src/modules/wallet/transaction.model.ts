@@ -33,7 +33,6 @@ const transactionSchema = new Schema<ITransaction, TransactionModel>(
       type: String,
       enum: Object.values(TransactionStatus),
       default: TransactionStatus.PENDING,
-      index: true,
     },
     provider: { type: String, enum: Object.values(PaymentProvider), required: true },
     amount: {
@@ -58,6 +57,12 @@ const transactionSchema = new Schema<ITransaction, TransactionModel>(
 );
 
 transactionSchema.index({ user: 1, createdAt: -1 });
+/**
+ * Every figure on the revenue dashboard sums by type and status over a date
+ * range. Without this the totals scan the whole ledger, which is the collection
+ * that grows fastest. Its leading prefix also serves a filter on `status` alone.
+ */
+transactionSchema.index({ type: 1, status: 1, createdAt: -1 });
 /**
  * Payment providers retry webhooks. Keying on (provider, externalId) makes a
  * replayed callback a duplicate-key error rather than a second credit.

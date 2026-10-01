@@ -1,5 +1,6 @@
 import type mongoose from 'mongoose';
 import { keys, redis } from '../../config/redis';
+import { env } from '../../config/env';
 import { logger } from '../../config/logger';
 import { ConflictError, NotFoundError, UnauthorizedError } from '../../common/errors/ApiError';
 import type { Craft, Language} from '../../common/types';
@@ -56,23 +57,88 @@ export const updateMasterProfile = async (
 };
 
 /**
+ * Records that the user was here, at most once per throttle window.
+ *
+ * A phone on a mobile network drops and re-establishes its socket constantly,
+ * and an unconditional write would mean a database write per reconnect per
+ * user — the single heaviest write in the system at scale, for a field the
+ * matching grace window only reads to minute resolution.
+ *
+ * Going offline always writes: that timestamp is precisely what decides how
+ * much longer the pro keeps receiving offers by push.
+ */
+const touchLastSeen = async (userId: string, force: boolean): Promise<void> => {
+  const throttle = env.PRESENCE_SEEN_THROTTLE_SECONDS;
+
+  if (!force && throttle > 0) {
+    try {
+      if (await redis.get(keys.seenRecently(userId))) return;
+      await redis.set(keys.seenRecently(userId), '1', 'EX', throttle);
+    } catch {
+      // Redis being unavailable must not stop the write; it only stops the
+      // throttling, which is an optimisation rather than a correctness rule.
+    }
+  }
+
+  await User.updateOne({ _id: userId }, { $set: { lastSeenAt: new Date() } });
+};
+
+/**
  * Online state lives in Redis — the socket layer writes it on connect and
  * disconnect — and is mirrored onto the profile so the matching aggregate can
  * filter on it without a second round trip.
  */
 export const setOnline = async (userId: string, online: boolean): Promise<void> => {
   const [profile] = await Promise.all([
-    MasterProfile.findOneAndUpdate({ user: userId }, { $set: { isOnline: online } }),
+    MasterProfile.updateOne({ user: userId }, { $set: { isOnline: online } }),
     online
       ? redis.sadd(keys.onlineMasters, userId)
       : redis.srem(keys.onlineMasters, userId),
-    User.updateOne({ _id: userId }, { $set: { lastSeenAt: new Date() } }),
+    touchLastSeen(userId, !online),
   ]);
 
-  if (profile && online) {
+  if (profile.matchedCount > 0 && online) {
     await redis.set(keys.onlineMaster(userId), '1', 'EX', 300);
   } else {
     await redis.del(keys.onlineMaster(userId));
+  }
+};
+
+/**
+ * Counts a user's live sockets across every instance, and reports whether this
+ * was their last one.
+ *
+ * The alternative — asking the Socket.IO adapter to enumerate a room — is a
+ * request and response over Redis to every instance in the cluster, on every
+ * single disconnect. A counter is one command.
+ *
+ * The count can drift upwards if an instance is killed without running its
+ * disconnect handlers. That only delays a pro being marked offline, the key
+ * expires on its own, and `isOnline` is corrected by their next connection —
+ * so the cheap answer is the right trade here.
+ */
+export const trackSocket = async (
+  userId: string,
+  event: 'connect' | 'disconnect',
+): Promise<{ remaining: number }> => {
+  const key = keys.socketsOfUser(userId);
+
+  try {
+    if (event === 'connect') {
+      const remaining = await redis.incr(key);
+      // Outlives any real session, so a leaked counter cannot last forever.
+      await redis.expire(key, 24 * 60 * 60);
+      return { remaining };
+    }
+
+    const remaining = await redis.decr(key);
+    if (remaining <= 0) await redis.del(key);
+    return { remaining: Math.max(0, remaining) };
+  } catch {
+    // Without Redis the socket layer falls back to treating each disconnect as
+    // the last one, which is the safe direction: a pro is marked offline and
+    // their next event marks them back on.
+    return { remaining: 0 };
   }
 };
 

@@ -26,6 +26,9 @@ import { Chat, Message, type ChatDocument, type IChat, type IMessage } from '../
 import { Product, type IProduct, type ProductDocument } from '../product/product.model';
 import { Review, ReviewTarget, type IReview, type ReviewDocument } from '../review/review.model';
 import { Transaction, type ITransaction, type TransactionDocument } from '../wallet/transaction.model';
+import { Notification } from '../notification/notification.model';
+import { getNotificationQueue, NotificationJob } from '../../jobs/queues';
+import { isQueueCapable } from '../../jobs/scheduler';
 import { refundOrderFee } from '../wallet/wallet.service';
 import { recomputeRating } from '../review/review.service';
 import { notify } from '../notification/notification.service';
@@ -760,8 +763,12 @@ export const listTransactions = async (
 
 /* ──────────────────────────── broadcasts ─────────────────────────── */
 
-/** Recipients notified concurrently per batch — enough to be quick, few enough not to flood FCM. */
-const BROADCAST_BATCH = 50;
+/**
+ * Recipients per batch. Each batch is one insert and one queue call, so this is
+ * a memory bound rather than a concurrency one — it caps how many notification
+ * documents are held at once while an announcement to the whole user base runs.
+ */
+const BROADCAST_BATCH = 500;
 
 export const broadcast = async (
   adminId: string,
@@ -772,23 +779,75 @@ export const broadcast = async (
     isBlocked: false,
     role: input.audience === 'all' ? { $ne: UserRole.ADMIN } : input.audience,
   };
-  const users = await User.find(filter).select('_id').lean();
+  // Only what an announcement needs: an audience of every user must not be
+  // pulled into memory as whole documents.
+  const users = await User.find(filter).select('_id pushTokens').lean();
 
   let delivered = 0;
   for (let start = 0; start < users.length; start += BROADCAST_BATCH) {
     const batch = users.slice(start, start + BROADCAST_BATCH);
-    const results = await Promise.allSettled(
-      batch.map((user) =>
-        notify({
-          userId: user._id.toString(),
-          type: NotificationType.ANNOUNCEMENT,
-          title: input.title,
-          body: input.body,
-          data: { kind: 'announcement' },
-        }),
-      ),
+    const tokensOf = new Map(batch.map((user) => [user._id.toString(), user.pushTokens ?? []]));
+
+    /**
+     * One insert for the whole batch rather than one per recipient. Going
+     * through `notify` would re-read each user it had just been handed and
+     * write their row on its own round trip — two database operations per
+     * person, which for an announcement to the entire user base is the
+     * difference between one query and tens of thousands.
+     */
+    // eslint-disable-next-line no-await-in-loop
+    const created = await Notification.insertMany(
+      batch.map((user) => ({
+        user: user._id,
+        type: NotificationType.ANNOUNCEMENT,
+        title: input.title,
+        body: input.body,
+        data: { kind: 'announcement' },
+      })),
+      { ordered: false },
     );
-    delivered += results.filter((result) => result.status === 'fulfilled').length;
+
+    created.forEach((notification) => {
+      emitToUser(notification.user.toString(), SocketEvent.NOTIFICATION, notification.toJSON());
+    });
+
+    /**
+     * The device pushes are queued in a single call. Where there is no queue
+     * they are dropped rather than sent inline: thousands of sequential FCM
+     * calls would hold this request open for minutes, and the in-app
+     * notification — the part the panel reports on — has already landed.
+     */
+    const pushes = created
+      .map((notification) => ({
+        notification,
+        tokens: tokensOf.get(notification.user.toString()) ?? [],
+      }))
+      .filter(({ tokens }) => tokens.length > 0);
+
+    if (pushes.length > 0 && isQueueCapable()) {
+      // eslint-disable-next-line no-await-in-loop
+      await getNotificationQueue()
+        .addBulk(
+          pushes.map(({ notification, tokens }) => ({
+            name: NotificationJob.PUSH,
+            data: {
+              notificationId: notification._id.toString(),
+              tokens,
+              title: notification.title,
+              body: notification.body,
+              data: { ...notification.data, type: notification.type },
+              ringing: false,
+            },
+          })),
+        )
+        .catch((error: unknown) => {
+          logger.warn('Could not queue broadcast pushes', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+    }
+
+    delivered += created.length;
   }
 
   await record(adminId, AdminAction.BROADCAST_SENT, AdminTarget.BROADCAST, null, input.title, {

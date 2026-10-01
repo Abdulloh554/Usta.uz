@@ -68,6 +68,69 @@ would fail with `MongooseServerSelectionError`. Keep *Network Access* open to
 `0.0.0.0/0` and rely on the connection-string credentials, or move to a paid
 Render plan and allow its static outbound IPs instead.
 
+## Capacity and scaling out
+
+The application is written to run as several identical instances. Nothing that
+matters is held in a process: sessions and rate-limit counters are in Redis,
+socket fan-out goes through the Redis adapter, offer timeouts are BullMQ jobs,
+and presence is a Redis counter. Adding an instance therefore needs no code
+change — but the free plan this service runs on is a single small shared-CPU
+instance that also sleeps when idle, and that is the ceiling long before the
+code is. Moving off it is the first and largest change; everything below only
+matters once that is done.
+
+### Before running more than one instance
+
+| Setting | Why |
+| --- | --- |
+| `SOCKET_TRANSPORTS=websocket` | A polling client makes its handshake and its subsequent polls on separate connections. With more than one replica those can land on different instances and the session breaks — this is exactly what sticky sessions exist to prevent, and restricting the transport removes the need for them. |
+| Health check → `/health/ready` | `/health` reports only that the process is alive, on purpose: if it failed whenever Mongo or Redis did, one shared outage would have every instance restarted at once. `/health/ready` returns 503 while an instance is still connecting, has lost a backing service, or is draining for a deploy. |
+| `MONGO_MAX_POOL` | Each instance opens its own pool, so the ceiling is this value times the number of instances. Keep the total under what the cluster allows. |
+
+### Tuning one instance
+
+- `CLUSTER_WORKERS` — Node uses one core per process. `1` is right for a
+  one-core container; `0` starts one worker per CPU. Workers share the listening
+  socket and keep all shared state outside the process, so nothing else changes.
+- `BCRYPT_ROUNDS` — `bcryptjs` is pure JavaScript, so every sign-in costs the API
+  process real CPU: measured on a development machine, roughly 420 ms per hash at
+  12 rounds against 110 ms at 10. The default is now 10, which OWASP still
+  considers sound. Existing hashes carry their own cost factor, so changing this
+  never invalidates a password.
+- `STATS_CACHE_SECONDS` — the admin dashboard is thirty-odd whole-collection
+  counts behind one screen, and it competes with the request path for the same
+  connections. It is cached for 30 seconds by default.
+- `PRESENCE_SEEN_THROTTLE_SECONDS` — a phone on a mobile network reconnects
+  constantly. `lastSeenAt` is written at most once per window instead of once per
+  reconnect, which at scale is the single heaviest write in the system.
+- `RATE_LIMIT_GLOBAL_MAX` — the budget is counted per signed-in account, falling
+  back to the IP only for anonymous requests. Uzbek carriers put very large
+  numbers of subscribers behind a handful of NAT addresses, so an IP-only limit
+  would be shared between strangers.
+
+### Indexes
+
+`MONGO_AUTO_INDEX` is on by default, which is right while the database is small.
+Once collections are large, turn it off so a deploy never triggers an index build
+against live traffic, and apply schema index changes deliberately:
+
+```bash
+npm run indexes:sync
+```
+
+`syncIndexes` also drops indexes the schemas no longer declare, so it is the
+whole reconciliation rather than only the additions.
+
+### Shutdown
+
+`SIGTERM` fails the readiness probe first, so the load balancer stops sending new
+requests while the instance is still serving the ones it has. It then stops
+accepting connections, disconnects the web sockets — which never close on their
+own, and would otherwise keep the drain waiting forever — finishes the workers,
+and closes Mongo and Redis. `SHUTDOWN_TIMEOUT_MS` bounds the whole sequence,
+because a drain that hangs holds the deploy open until the platform sends
+`SIGKILL`, and that is the one exit that drops in-flight work.
+
 ## Verifying
 
 `GET /health` reports both backing services, so it distinguishes "the process is

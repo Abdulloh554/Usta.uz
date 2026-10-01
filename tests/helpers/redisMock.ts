@@ -59,6 +59,13 @@ export class FakeRedis {
     return current;
   }
 
+  async decr(key: string): Promise<number> {
+    const current = Number(this.live(key)?.value ?? '0') - 1;
+    const existing = this.store.get(key);
+    this.store.set(key, { value: String(current), expiresAt: existing?.expiresAt ?? null });
+    return current;
+  }
+
   async expire(key: string, seconds: number): Promise<number> {
     const entry = this.store.get(key);
     if (!entry) return 0;

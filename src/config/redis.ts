@@ -69,7 +69,10 @@ export const keys = {
   masterOffer: (masterId: string): string => `match:master:${masterId}`,
   onlineMaster: (masterId: string): string => `presence:master:${masterId}`,
   onlineMasters: 'presence:masters',
+  /** How many live sockets a user holds, across every instance. */
   socketsOfUser: (userId: string): string => `presence:sockets:${userId}`,
+  /** Throttle marker: set while this user's `lastSeenAt` is recent enough. */
+  seenRecently: (userId: string): string => `presence:seen:${userId}`,
   categoryCache: 'cache:categories',
   topMasters: (category: string, region: string): string => `cache:top:${category}:${region}`,
 } as const;

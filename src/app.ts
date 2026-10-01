@@ -8,6 +8,7 @@ import mongoSanitize from 'express-mongo-sanitize';
 import mongoose from 'mongoose';
 import { env, isProduction, isTest } from './config/env';
 import { httpLogStream } from './config/logger';
+import { isShuttingDown } from './config/lifecycle';
 import { redis } from './config/redis';
 import { apiRouter } from './routes';
 import { errorHandler, notFoundHandler } from './common/middlewares/error.middleware';
@@ -43,18 +44,54 @@ export const createApp = (): Express => {
   app.use(mongoSanitize({ replaceWith: '_' }));
 
   if (!isTest) {
-    app.use(morgan(isProduction ? 'combined' : 'dev', { stream: httpLogStream }));
+    app.use(
+      morgan(isProduction ? 'combined' : 'dev', {
+        stream: httpLogStream,
+        // Probes run every few seconds forever; logging them buries the traffic
+        // that actually happened and costs a write per probe.
+        skip: (req) => req.url.startsWith('/health'),
+      }),
+    );
   }
 
+  const backingServices = () => ({
+    mongo: mongoose.connection.readyState === 1 ? 'up' : 'down',
+    redis: redis.status === 'ready' ? 'up' : redis.status,
+  });
+
+  /**
+   * Liveness. Answers for the process alone, so a shared Mongo or Redis blip
+   * cannot make every instance look dead at once and have them all restarted —
+   * which turns a recoverable dependency outage into a total one.
+   */
   app.get('/health', (_req, res) => {
     res.json({
       success: true,
       data: {
         status: 'ok',
         uptime: Math.floor(process.uptime()),
-        mongo: mongoose.connection.readyState === 1 ? 'up' : 'down',
-        redis: redis.status === 'ready' ? 'up' : redis.status,
+        ...backingServices(),
         env: env.NODE_ENV,
+      },
+    });
+  });
+
+  /**
+   * Readiness. Answers whether *this* instance can serve a request right now,
+   * so a replica that is still connecting, has lost a backing service, or is
+   * draining for a deploy is taken out of the load balancer instead of being
+   * handed traffic it will fail.
+   */
+  app.get('/health/ready', (_req, res) => {
+    const services = backingServices();
+    const ready = services.mongo === 'up' && services.redis === 'up' && !isShuttingDown();
+
+    res.status(ready ? 200 : 503).json({
+      success: ready,
+      data: {
+        status: ready ? 'ready' : 'unavailable',
+        draining: isShuttingDown(),
+        ...services,
       },
     });
   });

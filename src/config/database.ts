@@ -24,9 +24,16 @@ export const connectDatabase = async (uri: string = env.MONGO_URI): Promise<type
   connecting = mongoose
     .connect(uri, {
       serverSelectionTimeoutMS: 10_000,
-      maxPoolSize: 20,
-      minPoolSize: 2,
+      maxPoolSize: env.MONGO_MAX_POOL,
+      minPoolSize: env.MONGO_MIN_POOL,
+      // A connection that has sat unused for a minute is returned to the server,
+      // so an instance that saw one traffic spike does not hold the pool open.
+      maxIdleTimeMS: 60_000,
+      // Wait rather than throw when every pooled connection is busy: a brief
+      // queue is the right answer to a burst, an error is not.
+      waitQueueTimeoutMS: 10_000,
       retryWrites: true,
+      autoIndex: env.MONGO_AUTO_INDEX,
     })
     .then((instance) => {
       logger.info('MongoDB connected', { host: instance.connection.host, db: instance.connection.name });

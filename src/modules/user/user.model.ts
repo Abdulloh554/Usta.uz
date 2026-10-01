@@ -102,6 +102,8 @@ const userSchema = new Schema<IUser, UserModel, IUserMethods>(
 
 userSchema.index({ role: 1, isActive: 1 });
 userSchema.index({ createdAt: -1 });
+/** The matching grace window and the dashboard's "active today" both range over this. */
+userSchema.index({ lastSeenAt: -1 });
 
 /**
  * Hashing lives on the model rather than in the service, so no code path can
