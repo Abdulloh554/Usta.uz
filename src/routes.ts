@@ -9,6 +9,7 @@ import { walletRouter } from './modules/wallet/wallet.routes';
 import { notificationRouter } from './modules/notification/notification.routes';
 import { mediaRouter } from './modules/media/media.routes';
 import { adminRouter } from './modules/admin/admin.routes';
+import { trafficRouter } from './modules/traffic/traffic.routes';
 
 /** Every module mounts here; `app.ts` mounts this once under the API prefix. */
 export const apiRouter = Router();
@@ -23,3 +24,4 @@ apiRouter.use('/wallet', walletRouter);
 apiRouter.use('/notifications', notificationRouter);
 apiRouter.use('/media', mediaRouter);
 apiRouter.use('/admin', adminRouter);
+apiRouter.use('/traffic', trafficRouter);

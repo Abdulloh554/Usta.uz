@@ -5,6 +5,7 @@ import { asyncHandler, noContent, ok } from '../../common/utils/http';
 import { UserRole, type AuthenticatedRequest } from '../../common/types';
 import * as adminService from './admin.service';
 import * as statsService from './stats.service';
+import { trafficQuerySchema, trafficReport, type TrafficQuery } from '../traffic/traffic.service';
 import {
   adjustBalanceSchema,
   adminCancelOrderSchema,
@@ -46,6 +47,14 @@ const id = (req: AdminRequest): string => req.params.id as string;
 export const adminRouter = Router();
 
 adminRouter.use(authenticate, authorize(UserRole.ADMIN));
+
+adminRouter.get(
+  '/stats/traffic',
+  validate({ query: trafficQuerySchema }),
+  asyncHandler(async (req, res) => {
+    ok(res, await trafficReport(req.query as unknown as TrafficQuery));
+  }),
+);
 
 /* — analytics — */
 adminRouter.get(
@@ -141,7 +150,10 @@ adminRouter.post(
   '/orders/:id/cancel',
   validate({ params: idParamSchema, body: adminCancelOrderSchema }),
   asyncHandler<AdminRequest>(async (req, res) => {
-    ok(res, await adminService.cancelOrder(req.user.id, id(req), req.body as AdminCancelOrderInput));
+    ok(
+      res,
+      await adminService.cancelOrder(req.user.id, id(req), req.body as AdminCancelOrderInput),
+    );
   }),
 );
 

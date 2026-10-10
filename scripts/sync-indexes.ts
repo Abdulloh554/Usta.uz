@@ -53,6 +53,7 @@ const run = async (): Promise<void> => {
   await import('../src/modules/wallet/transaction.model');
   await import('../src/modules/notification/notification.model');
   await import('../src/modules/admin/adminLog.model');
+  await import('../src/modules/traffic/traffic.model');
 
   await connectDatabase();
 
