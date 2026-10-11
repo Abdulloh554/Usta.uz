@@ -12,6 +12,7 @@ import { connectDatabase, disconnectDatabase } from './config/database';
 import { connectRedis, disconnectRedis } from './config/redis';
 import { initSocketServer } from './sockets';
 import { startWorkers, stopWorkers } from './jobs';
+import { resetRedisOnce } from './common/utils/resetRedis';
 
 initSentry();
 
@@ -31,6 +32,8 @@ const workerCount = (): number => {
 
 const start = async (): Promise<void> => {
   await Promise.all([connectDatabase(), connectRedis()]);
+  const reset = await resetRedisOnce(env.REDIS_RESET_TOKEN);
+  if (reset) logger.info('Redis maintenance reset complete', reset);
 
   const app = createApp();
   const server = http.createServer(app);

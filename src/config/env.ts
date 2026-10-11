@@ -71,6 +71,7 @@ const schema = z.object({
   MONGO_AUTO_INDEX: booleanish.default('true'),
 
   REDIS_URL: z.string().min(1),
+  REDIS_RESET_TOKEN: z.string().max(100).regex(/^[a-zA-Z0-9-]*$/).default(''),
 
   JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must be at least 32 characters'),
   JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 characters'),
