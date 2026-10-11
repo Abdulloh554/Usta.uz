@@ -49,6 +49,7 @@ const run = async (): Promise<void> => {
   await import('../src/modules/order/order.model');
   await import('../src/modules/chat/chat.model');
   await import('../src/modules/product/product.model');
+  await import('../src/modules/product/purchase.model');
   await import('../src/modules/review/review.model');
   await import('../src/modules/wallet/transaction.model');
   await import('../src/modules/notification/notification.model');

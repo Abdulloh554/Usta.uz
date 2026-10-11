@@ -1,6 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { authenticate, authorize, optionalAuthenticate } from '../../common/middlewares/auth.middleware';
+import {
+  authenticate,
+  authorize,
+  optionalAuthenticate,
+} from '../../common/middlewares/auth.middleware';
 import {
   idParamSchema,
   paginationSchema,
@@ -9,6 +13,7 @@ import {
 import { asyncHandler, created, noContent, ok } from '../../common/utils/http';
 import { UserRole, type AuthenticatedRequest } from '../../common/types';
 import * as productService from './product.service';
+import * as purchases from './purchase.service';
 
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Must be a hex colour');
 
@@ -41,10 +46,50 @@ const productBodySchema = z.object({
 const listQuerySchema = paginationSchema.extend({
   search: z.string().trim().max(120).optional(),
   category: z.string().trim().max(60).optional(),
-  seller: z.string().regex(/^[0-9a-fA-F]{24}$/).optional(),
+  seller: z
+    .string()
+    .regex(/^[0-9a-fA-F]{24}$/)
+    .optional(),
 });
 
 export const productRouter = Router();
+
+productRouter.get(
+  '/purchases',
+  authenticate,
+  authorize(UserRole.CLIENT, UserRole.MASTER, UserRole.SELLER),
+  validate({ query: purchases.purchaseListSchema }),
+  asyncHandler<AuthenticatedRequest>(async (req, res) => {
+    const { page, limit } = req.query as unknown as { page: number; limit: number };
+    ok(res, await purchases.listPurchases(req.user.id, req.user.role, page, limit));
+  }),
+);
+productRouter.post(
+  '/:id/purchase',
+  authenticate,
+  authorize(UserRole.CLIENT, UserRole.MASTER),
+  validate({ params: idParamSchema, body: purchases.purchaseSchema }),
+  asyncHandler<AuthenticatedRequest>(async (req, res) => {
+    created(
+      res,
+      await purchases.createPurchase(
+        req.user.id,
+        req.params.id as string,
+        req.body as z.infer<typeof purchases.purchaseSchema>,
+      ),
+    );
+  }),
+);
+productRouter.patch(
+  '/purchases/:id',
+  authenticate,
+  authorize(UserRole.CLIENT, UserRole.MASTER, UserRole.SELLER),
+  validate({ params: idParamSchema, body: purchases.purchaseStatusSchema }),
+  asyncHandler<AuthenticatedRequest>(async (req, res) => {
+    const { status } = req.body as z.infer<typeof purchases.purchaseStatusSchema>;
+    ok(res, await purchases.updatePurchase(req.user.id, req.params.id as string, status));
+  }),
+);
 
 /* — seller-owned routes, before `/:id` so they are not read as ids — */
 productRouter.get(
