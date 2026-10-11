@@ -56,6 +56,8 @@ const productSchema = new Schema<IProduct, ProductModel>(
 );
 
 productSchema.index({ isActive: 1, createdAt: -1 });
+productSchema.index({ seller: 1, isActive: 1, createdAt: -1 });
+productSchema.index({ category: 1, isActive: 1, createdAt: -1 });
 productSchema.index({ title: 'text', description: 'text' });
 
 export const Product = model<IProduct, ProductModel>('Product', productSchema);

@@ -109,6 +109,9 @@ const orderSchema = new Schema<IOrder, OrderModel>(
 
 orderSchema.index({ client: 1, status: 1, createdAt: -1 });
 orderSchema.index({ master: 1, status: 1, createdAt: -1 });
+orderSchema.index({ client: 1, createdAt: -1 });
+orderSchema.index({ master: 1, createdAt: -1 });
+orderSchema.index({ master: 1, status: 1, completedAt: -1 });
 orderSchema.index({ category: 1, status: 1, createdAt: -1 });
 orderSchema.index({ location: '2dsphere' });
 /**

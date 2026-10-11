@@ -88,6 +88,7 @@ const masterProfileSchema = new Schema<IMasterProfile, MasterProfileModel, IMast
  * by rating descending — this compound index serves that query directly.
  */
 masterProfileSchema.index({ crafts: 1, isOnline: 1, isAvailable: 1, rating: -1 });
+masterProfileSchema.index({ rating: -1, completedJobs: -1 });
 /**
  * `regions` gets its own index rather than a compound one with `crafts`:
  * MongoDB refuses to index two array fields together ("parallel arrays").
