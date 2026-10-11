@@ -97,7 +97,9 @@ describe('admin routes', () => {
         },
       ]);
 
-      const response = await request(app).get(`${PREFIX}/admin/stats/overview`).set('Authorization', auth);
+      const response = await request(app)
+        .get(`${PREFIX}/admin/stats/overview`)
+        .set('Authorization', auth);
 
       expect(response.status).toBe(200);
       const { users, orders, finance } = response.body.data;
@@ -128,7 +130,9 @@ describe('admin routes', () => {
 
     it('lists the busiest pros', async () => {
       await makeMaster({ firstName: 'Bekzod' });
-      const response = await request(app).get(`${PREFIX}/admin/stats/top-masters`).set('Authorization', auth);
+      const response = await request(app)
+        .get(`${PREFIX}/admin/stats/top-masters`)
+        .set('Authorization', auth);
       expect(response.status).toBe(200);
       expect(response.body.data[0].name).toBe('Bekzod Yuldashev');
     });
@@ -164,10 +168,14 @@ describe('admin routes', () => {
       const master = await makeMaster();
       await User.updateOne({ _id: master._id }, { isBlocked: true });
 
-      const masters = await request(app).get(`${PREFIX}/admin/users?role=master`).set('Authorization', auth);
+      const masters = await request(app)
+        .get(`${PREFIX}/admin/users?role=master`)
+        .set('Authorization', auth);
       expect(masters.body.data.total).toBe(1);
 
-      const blocked = await request(app).get(`${PREFIX}/admin/users?status=blocked`).set('Authorization', auth);
+      const blocked = await request(app)
+        .get(`${PREFIX}/admin/users?status=blocked`)
+        .set('Authorization', auth);
       expect(blocked.body.data.items[0].id).toBe(master.id);
     });
 
@@ -184,7 +192,9 @@ describe('admin routes', () => {
         status: OrderStatus.ACCEPTED,
       });
 
-      const response = await request(app).get(`${PREFIX}/admin/users/${master.id}`).set('Authorization', auth);
+      const response = await request(app)
+        .get(`${PREFIX}/admin/users/${master.id}`)
+        .set('Authorization', auth);
 
       expect(response.status).toBe(200);
       expect(response.body.data.masterProfile.crafts).toEqual(['electrician']);
@@ -305,7 +315,9 @@ describe('admin routes', () => {
         .set('Authorization', auth);
       expect(found.body.data.items).toHaveLength(1);
 
-      const detail = await request(app).get(`${PREFIX}/admin/orders/${order.id}`).set('Authorization', auth);
+      const detail = await request(app)
+        .get(`${PREFIX}/admin/orders/${order.id}`)
+        .set('Authorization', auth);
       expect(detail.status).toBe(200);
       expect(detail.body.data.order.code).toBe(order.code);
     });
@@ -343,7 +355,10 @@ describe('admin routes', () => {
     it('will not cancel a job twice', async () => {
       const client = await makeClient();
       const order = await makeOrder(client._id);
-      await Order.updateOne({ _id: order._id }, { status: OrderStatus.CANCELLED, cancelReason: 'Spam' });
+      await Order.updateOne(
+        { _id: order._id },
+        { status: OrderStatus.CANCELLED, cancelReason: 'Spam' },
+      );
 
       const response = await request(app)
         .post(`${PREFIX}/admin/orders/${order.id}/cancel`)
@@ -393,7 +408,11 @@ describe('admin routes', () => {
       const order = await makeOrder(client._id, { status: OrderStatus.ACCEPTED });
       const chat = await Chat.create({ participants: [client._id, master._id], order: order._id });
       const first = await Message.create({ chat: chat._id, sender: client._id, text: 'Hello' });
-      const second = await Message.create({ chat: chat._id, sender: master._id, text: 'Call me at +998...' });
+      const second = await Message.create({
+        chat: chat._id,
+        sender: master._id,
+        text: 'Call me at +998...',
+      });
       chat.lastMessage = second._id;
       chat.lastMessageAt = second.createdAt;
       await chat.save();
@@ -413,10 +432,7 @@ describe('admin routes', () => {
         .get(`${PREFIX}/admin/chats/${chat.id}/messages`)
         .set('Authorization', auth);
       const texts = (thread.body.data.items as Array<{ text: string }>).map((m) => m.text);
-      expect(texts).toEqual([
-        'Hello',
-        'Call me at +998...',
-      ]);
+      expect(texts).toEqual(['Hello', 'Call me at +998...']);
     });
 
     it('deletes a message and rewinds the chat preview', async () => {
@@ -444,7 +460,11 @@ describe('admin routes', () => {
   describe('moderation', () => {
     it('hides and restores a product, including ones sellers hid', async () => {
       const seller = await makeSeller();
-      const product = await Product.create({ seller: seller._id, title: 'Perforator', price: 850_000 });
+      const product = await Product.create({
+        seller: seller._id,
+        title: 'Perforator',
+        price: 850_000,
+      });
 
       const hidden = await request(app)
         .patch(`${PREFIX}/admin/products/${product.id}`)
@@ -452,7 +472,9 @@ describe('admin routes', () => {
         .send({ isActive: false });
       expect(hidden.body.data.isActive).toBe(false);
 
-      const list = await request(app).get(`${PREFIX}/admin/products?status=hidden`).set('Authorization', auth);
+      const list = await request(app)
+        .get(`${PREFIX}/admin/products?status=hidden`)
+        .set('Authorization', auth);
       expect(list.body.data.items).toHaveLength(1);
     });
 
@@ -482,7 +504,9 @@ describe('admin routes', () => {
       expect(profile!.rating).toBe(5);
       expect(profile!.ratingCount).toBe(1);
 
-      const list = await request(app).get(`${PREFIX}/admin/reviews?visible=false`).set('Authorization', auth);
+      const list = await request(app)
+        .get(`${PREFIX}/admin/reviews?visible=false`)
+        .set('Authorization', auth);
       expect(list.body.data.items[0].targetName).toBe('Bekzod Yuldashev');
     });
   });
@@ -522,7 +546,12 @@ describe('admin routes', () => {
       const seller = await makeSeller();
       const order = await makeOrder(client._id);
       await Product.create({ seller: seller._id, title: 'Drel', price: 100, category: 'tools' });
-      await Review.create({ author: client._id, targetType: ReviewTarget.MASTER, target: master._id, stars: 4 });
+      await Review.create({
+        author: client._id,
+        targetType: ReviewTarget.MASTER,
+        target: master._id,
+        stars: 4,
+      });
       await Transaction.create({
         user: master._id,
         type: TransactionType.TOP_UP,
@@ -553,10 +582,14 @@ describe('admin routes', () => {
         expect({ url, total: response.body.data.total }).toEqual({ url, total: count });
       }
 
-      const detail = await request(app).get(`${PREFIX}/admin/chats/${chat.id}`).set('Authorization', auth);
+      const detail = await request(app)
+        .get(`${PREFIX}/admin/chats/${chat.id}`)
+        .set('Authorization', auth);
       expect(detail.body.data.order.code).toBe(order.code);
 
-      const sellerDetail = await request(app).get(`${PREFIX}/admin/users/${seller.id}`).set('Authorization', auth);
+      const sellerDetail = await request(app)
+        .get(`${PREFIX}/admin/users/${seller.id}`)
+        .set('Authorization', auth);
       expect(sellerDetail.body.data.masterProfile).toBeNull();
       expect(sellerDetail.body.data.counts.products).toBe(1);
     });
@@ -564,7 +597,10 @@ describe('admin routes', () => {
     it('deactivates, reactivates and unblocks, journaling only real changes', async () => {
       const client = await makeClient();
       const patch = (body: object) =>
-        request(app).patch(`${PREFIX}/admin/users/${client.id}/status`).set('Authorization', auth).send(body);
+        request(app)
+          .patch(`${PREFIX}/admin/users/${client.id}/status`)
+          .set('Authorization', auth)
+          .send(body);
 
       expect((await patch({ isActive: false })).body.data.isActive).toBe(false);
       expect((await patch({ isActive: true })).body.data.isActive).toBe(true);
@@ -582,7 +618,9 @@ describe('admin routes', () => {
       const missing = new mongoose.Types.ObjectId().toString();
       const calls = [
         request(app).get(`${PREFIX}/admin/users/${missing}`),
-        request(app).post(`${PREFIX}/admin/users/${missing}/balance`).send({ amount: 10, note: 'Test' }),
+        request(app)
+          .post(`${PREFIX}/admin/users/${missing}/balance`)
+          .send({ amount: 10, note: 'Test' }),
         request(app).patch(`${PREFIX}/admin/users/${missing}/status`).send({ isActive: false }),
         request(app).get(`${PREFIX}/admin/orders/${missing}`),
         request(app).post(`${PREFIX}/admin/orders/${missing}/cancel`).send({ reason: 'Missing' }),
@@ -646,7 +684,11 @@ describe('admin routes', () => {
       const client = await makeClient();
       const master = await makeMaster();
       const order = await makeOrder(client._id);
-      const chat = await Chat.create({ participants: [client._id, master._id], order: order._id, isClosed: true });
+      const chat = await Chat.create({
+        participants: [client._id, master._id],
+        order: order._id,
+        isClosed: true,
+      });
       const older = await Message.create({ chat: chat._id, sender: client._id, text: 'First' });
       const latest = await Message.create({ chat: chat._id, sender: master._id, text: 'Second' });
       chat.lastMessage = latest._id;
@@ -666,7 +708,12 @@ describe('admin routes', () => {
     it('restores a hidden product and a hidden review', async () => {
       const seller = await makeSeller();
       const client = await makeClient();
-      const product = await Product.create({ seller: seller._id, title: 'Kafel', price: 5000, isActive: false });
+      const product = await Product.create({
+        seller: seller._id,
+        title: 'Kafel',
+        price: 5000,
+        isActive: false,
+      });
       const review = await Review.create({
         author: client._id,
         targetType: ReviewTarget.PRODUCT,
@@ -688,7 +735,9 @@ describe('admin routes', () => {
         .send({ isVisible: true });
       expect((await Product.findById(product._id))!.rating).toBe(3);
 
-      const list = await request(app).get(`${PREFIX}/admin/reviews?targetType=product`).set('Authorization', auth);
+      const list = await request(app)
+        .get(`${PREFIX}/admin/reviews?targetType=product`)
+        .set('Authorization', auth);
       expect(list.body.data.items[0].targetName).toBe('Kafel');
     });
   });
@@ -705,7 +754,10 @@ describe('admin routes', () => {
         .set('Authorization', auth)
         .send({ audience: 'all', title: 'Bayram', body: 'Bayramingiz muborak!' });
 
-      expect(response.body.data).toEqual({ recipients: 3, delivered: 3 });
+      expect(response.body.data).toMatchObject({ recipients: 3, delivered: 0, status: 'queued' });
+      const { processBroadcastBatch } = await import('../../src/modules/admin/broadcast.service');
+      await processBroadcastBatch();
+      expect(await Notification.countDocuments({ type: NotificationType.ANNOUNCEMENT })).toBe(3);
     });
 
     it('notifies every active user in the audience and journals it', async () => {
@@ -721,7 +773,9 @@ describe('admin routes', () => {
         .send({ audience: 'master', title: 'Yangi tarif', body: 'Ertadan xizmat haqi o‘zgaradi.' });
 
       expect(response.status).toBe(200);
-      expect(response.body.data).toEqual({ recipients: 2, delivered: 2 });
+      expect(response.body.data).toMatchObject({ recipients: 2, delivered: 0, status: 'queued' });
+      const { processBroadcastBatch } = await import('../../src/modules/admin/broadcast.service');
+      await processBroadcastBatch();
       expect(await Notification.countDocuments({ type: NotificationType.ANNOUNCEMENT })).toBe(2);
 
       const logs = await request(app).get(`${PREFIX}/admin/logs`).set('Authorization', auth);

@@ -1,8 +1,15 @@
 import crypto from 'node:crypto';
 import mongoose, { type FilterQuery } from 'mongoose';
-import { env } from '../../config/env';
+import { env, isProduction } from '../../config/env';
+import { supportsTransactions } from '../../config/database';
+import { User } from '../user/user.model';
 import { logger } from '../../config/logger';
-import { ConflictError, ForbiddenError, NotFoundError } from '../../common/errors/ApiError';
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ServiceUnavailableError,
+} from '../../common/errors/ApiError';
 import { NotificationType, OrderStatus, UserRole, type Paginated } from '../../common/types';
 import { paginate } from '../../common/utils/http';
 import { emitToUser } from '../../sockets/emitter';
@@ -31,44 +38,93 @@ const generateCode = (): string => {
   return code;
 };
 
-const createWithUniqueCode = async (payload: Omit<Partial<IOrder>, 'code'>): Promise<OrderDocument> => {
+const createWithUniqueCode = async (
+  payload: Omit<Partial<IOrder>, 'code'>,
+  session: mongoose.ClientSession | null,
+): Promise<OrderDocument> => {
   // A collision is vanishingly unlikely but not impossible; retry rather than
   // surfacing a duplicate-key error to the client.
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
-      return await Order.create({ ...payload, code: generateCode() });
+      const [order] = await Order.create(
+        [{ ...payload, code: generateCode() }],
+        session ? { session } : {},
+      );
+      return order!;
     } catch (error) {
       const isDuplicate =
         typeof error === 'object' && error !== null && (error as { code?: number }).code === 11000;
-      if (!isDuplicate || attempt === 4) throw error;
+      // A duplicate aborts a Mongo transaction; do not keep writing into it.
+      if (!isDuplicate || session || attempt === 4) throw error;
     }
   }
   /* istanbul ignore next — unreachable: the loop either returns or throws. */
   throw new ConflictError('Could not allocate a job code');
 };
 
-export const createOrder = async (clientId: string, input: CreateOrderInput): Promise<OrderDocument> => {
-  // One live job at a time keeps the client's home screen honest — it shows a
-  // single "active job" card — and stops the matching queue being flooded.
-  const live = await Order.exists({
-    client: clientId,
-    status: { $in: [OrderStatus.PENDING, OrderStatus.MATCHING] },
-  });
-  if (live) {
-    throw new ConflictError('You already have a job waiting for a pro', 'ACTIVE_ORDER_EXISTS');
+export const createOrder = async (
+  clientId: string,
+  input: CreateOrderInput,
+): Promise<OrderDocument> => {
+  const transactional = supportsTransactions();
+  if (!transactional && isProduction) {
+    throw new ServiceUnavailableError(
+      'Posting jobs requires a replica-set database',
+      'TRANSACTIONS_REQUIRED',
+    );
   }
+  const session = transactional ? await mongoose.startSession() : null;
+  const run = async (): Promise<OrderDocument> => {
+    if (session) {
+      const result = await User.updateOne(
+        { _id: clientId, isActive: true, isBlocked: false },
+        { $inc: { orderWriteVersion: 1 } },
+        { session },
+      );
+      if (result.matchedCount !== 1) throw new ForbiddenError('Account is unavailable');
+    }
+    // One live job at a time keeps the client's home screen honest — it shows a
+    // single "active job" card — and stops the matching queue being flooded.
+    const live = await Order.exists({
+      client: clientId,
+      status: { $in: [OrderStatus.PENDING, OrderStatus.MATCHING] },
+    }).session(session);
+    if (live) {
+      throw new ConflictError('You already have a job waiting for a pro', 'ACTIVE_ORDER_EXISTS');
+    }
 
-  const order = await createWithUniqueCode({
-    client: new mongoose.Types.ObjectId(clientId),
-    title: input.title,
-    description: input.description,
-    category: input.category,
-    address: input.address,
-    region: input.region,
-    location: input.location ? { type: 'Point', coordinates: input.location } : undefined,
-    photos: input.photos,
-    status: OrderStatus.PENDING,
-  });
+    return createWithUniqueCode(
+      {
+        client: new mongoose.Types.ObjectId(clientId),
+        title: input.title,
+        description: input.description,
+        category: input.category,
+        address: input.address,
+        region: input.region,
+        location: input.location ? { type: 'Point', coordinates: input.location } : undefined,
+        photos: input.photos,
+        status: OrderStatus.PENDING,
+      },
+      session,
+    );
+  };
+  let order: OrderDocument | undefined;
+  try {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        // A duplicate job code aborts the transaction. Retry the entire unit
+        // with a fresh code, rather than querying inside the aborted session.
+        // eslint-disable-next-line no-await-in-loop
+        order = session ? await session.withTransaction(run) : await run();
+        break;
+      } catch (error) {
+        if ((error as { code?: number }).code !== 11000 || attempt === 4) throw error;
+      }
+    }
+  } finally {
+    await session?.endSession();
+  }
+  if (!order) throw new ConflictError('Could not allocate a job code');
 
   const orderId = String(order._id);
   logger.info('Job posted', { orderId, clientId, category: order.category });
@@ -103,9 +159,11 @@ export const listOrdersForUser = async (
   const skip = (input.page - 1) * input.limit;
 
   const [items, total] = await Promise.all([
-    populated(Order.find(filter)).sort({ createdAt: -1 }).skip(skip).limit(input.limit).exec() as Promise<
-      OrderDocument[]
-    >,
+    populated(Order.find(filter))
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(input.limit)
+      .exec() as Promise<OrderDocument[]>,
     Order.countDocuments(filter),
   ]);
 
@@ -204,7 +262,8 @@ export const cancelOrder = async (
     throw new ConflictError('This job is already cancelled', 'ORDER_CANCELLED');
   }
 
-  const wasSearching = order.status === OrderStatus.MATCHING || order.status === OrderStatus.PENDING;
+  const wasSearching =
+    order.status === OrderStatus.MATCHING || order.status === OrderStatus.PENDING;
 
   // Conditional on the status just read: a pro accepting in the same instant
   // moves the job on, and a plain save would then overwrite their paid
@@ -222,7 +281,10 @@ export const cancelOrder = async (
     { new: true },
   );
   if (!cancelled) {
-    throw new ConflictError('The job changed while you were cancelling it — reload and try again', 'ORDER_CHANGED');
+    throw new ConflictError(
+      'The job changed while you were cancelling it — reload and try again',
+      'ORDER_CHANGED',
+    );
   }
 
   if (wasSearching) await abortMatching(orderId);

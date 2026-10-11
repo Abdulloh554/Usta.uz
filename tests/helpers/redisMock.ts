@@ -32,10 +32,29 @@ export class FakeRedis {
     return this.live(key)?.value ?? null;
   }
 
-  async set(key: string, value: string, mode?: string, ttl?: number): Promise<'OK'> {
+  async set(
+    key: string,
+    value: string,
+    mode?: string,
+    ttl?: number,
+    condition?: string,
+  ): Promise<'OK' | null> {
+    if (condition === 'NX' && this.live(key)) return null;
     const expiresAt = mode === 'EX' && typeof ttl === 'number' ? Date.now() + ttl * 1_000 : null;
     this.store.set(key, { value, expiresAt });
     return 'OK';
+  }
+
+  async eval(
+    script: string,
+    _count: number,
+    key: string,
+    value: string,
+    ttl?: number,
+  ): Promise<number> {
+    if (this.live(key)?.value !== value) return 0;
+    if (script.includes("'EXPIRE'")) return this.expire(key, ttl!);
+    return this.del(key);
   }
 
   async del(...keys: string[]): Promise<number> {
@@ -74,7 +93,9 @@ export class FakeRedis {
   }
 
   async scan(cursor: string, _match: string, pattern: string): Promise<[string, string[]]> {
-    const regex = new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`);
+    const regex = new RegExp(
+      `^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`,
+    );
     const matched = [...this.store.keys()].filter((key) => regex.test(key) && this.live(key));
     return ['0', matched];
   }

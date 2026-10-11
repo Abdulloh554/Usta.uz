@@ -26,4 +26,7 @@ const schema = new Schema<IVisit>(
 );
 schema.index({ site: 1, sessionId: 1 }, { unique: true });
 schema.index({ createdAt: -1 });
+schema.index({ site: 1, source: 1, createdAt: -1 });
+schema.index({ source: 1, createdAt: -1 });
+schema.index({ site: 1, createdAt: -1 });
 export const Visit = model<IVisit>('Visit', schema);

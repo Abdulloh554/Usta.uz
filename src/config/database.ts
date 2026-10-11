@@ -36,7 +36,10 @@ export const connectDatabase = async (uri: string = env.MONGO_URI): Promise<type
       autoIndex: env.MONGO_AUTO_INDEX,
     })
     .then((instance) => {
-      logger.info('MongoDB connected', { host: instance.connection.host, db: instance.connection.name });
+      logger.info('MongoDB connected', {
+        host: instance.connection.host,
+        db: instance.connection.name,
+      });
       return instance;
     })
     .catch((error: unknown) => {
@@ -70,7 +73,19 @@ mongoose.connection.on('disconnected', () => {
 export const supportsTransactions = (): boolean => {
   const client = mongoose.connection.getClient();
   // `topology` is not on the public typings but is the only reliable signal.
-  const {topology} = (client as unknown as { topology?: { s?: { description?: { type?: string } } } });
+  const { topology } = client as unknown as {
+    topology?: {
+      s?: { description?: { type?: string; servers?: Map<string, { type?: string }> } };
+    };
+  };
   const type = topology?.s?.description?.type;
-  return type === 'ReplicaSetWithPrimary' || type === 'Sharded';
+  if (type === 'ReplicaSetWithPrimary' || type === 'Sharded') return true;
+  // directConnection reports a Single topology even for a replica-set primary.
+  // Tests and local replica sets use this; inspect the actual server type too.
+  return (
+    type === 'Single' &&
+    [...(topology?.s?.description?.servers?.values() ?? [])].some(
+      (server) => server.type === 'RSPrimary',
+    )
+  );
 };

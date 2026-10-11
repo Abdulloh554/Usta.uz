@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import type { PipelineStage } from 'mongoose';
+import { env, isTest } from '../../config/env';
+import { cached, invalidate } from '../../common/utils/cache';
 import { paginationSchema } from '../../common/middlewares/validate.middleware';
 import { Visit, type IVisit } from './traffic.model';
 
@@ -36,6 +39,8 @@ type TrafficFacet = {
   hours: Array<Count & { _id: { hour: number; source: IVisit['source'] } }>;
   hourlyVisitors: Array<{ _id: number; visitors: number }>;
 };
+const statsKey = (date: string, site?: string, source?: string) =>
+  `traffic:counts:v2:${date}:${site ?? 'all'}:${source ?? 'all'}`;
 
 // Accept Google's actual search domains, never a substring like google.com.evil.test.
 export const isGoogleHost = (host: string): boolean =>
@@ -56,7 +61,7 @@ export async function recordVisit(input: VisitInput) {
   )
     source = 'google';
   try {
-    await Visit.updateOne(
+    const result = await Visit.updateOne(
       { site: input.site, sessionId: input.sessionId },
       {
         $setOnInsert: {
@@ -69,6 +74,15 @@ export async function recordVisit(input: VisitInput) {
       },
       { upsert: true, timestamps: { createdAt: true, updatedAt: false } },
     );
+    if (result.upsertedCount > 0) {
+      const date = new Date(Date.now() + 5 * 3600_000).toISOString().slice(0, 10);
+      await invalidate(
+        statsKey(date),
+        statsKey(date, input.site),
+        statsKey(date, undefined, source),
+        statsKey(date, input.site, source),
+      );
+    }
   } catch (error) {
     // Concurrent retries of the same session are still a single visit.
     if ((error as { code?: number }).code !== 11000) throw error;
@@ -84,57 +98,57 @@ export async function trafficReport(query: TrafficQuery) {
     ...(query.site ? { site: query.site } : {}),
     ...(query.source ? { source: query.source } : {}),
   };
-  const [stats, items, total] = await Promise.all([
-    Visit.aggregate<TrafficFacet>([
-      { $match: match },
-      {
-        $facet: {
-          totals: [
-            { $group: { _id: null, visits: { $sum: 1 }, visitors: { $addToSet: '$visitorId' } } },
-            { $project: { _id: 0, visits: 1, visitors: { $size: '$visitors' } } },
-          ],
-          sources: [
+  // Two-stage grouping counts unique browsers without building one enormous
+  // $addToSet array/BSON document. Independent groups may spill to disk.
+  const hourExpression = { $hour: { date: '$createdAt', timezone: 'Asia/Tashkent' } };
+  const aggregate = <T>(stages: PipelineStage[]) =>
+    Visit.aggregate<T>([{ $match: match }, ...stages])
+      .allowDiskUse(true)
+      .option({ maxTimeMS: 15_000 });
+  const [data, items] = await Promise.all([
+    cached(
+      statsKey(date, query.site, query.source),
+      isTest ? 0 : env.STATS_CACHE_SECONDS,
+      async (): Promise<TrafficFacet> => {
+        const [totals, sources, hours, hourlyVisitors] = await Promise.all([
+          aggregate<Count>([
+            { $group: { _id: '$visitorId', visits: { $sum: 1 } } },
+            { $group: { _id: null, visits: { $sum: '$visits' }, visitors: { $sum: 1 } } },
+            { $project: { _id: 0, visits: 1, visitors: 1 } },
+          ]),
+          aggregate<TrafficFacet['sources'][number]>([
+            { $group: { _id: { source: '$source', visitor: '$visitorId' }, visits: { $sum: 1 } } },
+            { $group: { _id: '$_id.source', visits: { $sum: '$visits' }, visitors: { $sum: 1 } } },
+          ]),
+          aggregate<TrafficFacet['hours'][number]>([
             {
               $group: {
-                _id: '$source',
+                _id: { hour: hourExpression, source: '$source', visitor: '$visitorId' },
                 visits: { $sum: 1 },
-                visitors: { $addToSet: '$visitorId' },
               },
             },
-            { $project: { visits: 1, visitors: { $size: '$visitors' } } },
-          ],
-          hours: [
             {
               $group: {
-                _id: {
-                  hour: { $hour: { date: '$createdAt', timezone: 'Asia/Tashkent' } },
-                  source: '$source',
-                },
-                visits: { $sum: 1 },
-                visitors: { $addToSet: '$visitorId' },
+                _id: { hour: '$_id.hour', source: '$_id.source' },
+                visits: { $sum: '$visits' },
+                visitors: { $sum: 1 },
               },
             },
-            { $project: { visits: 1, visitors: { $size: '$visitors' } } },
-          ],
-          hourlyVisitors: [
-            {
-              $group: {
-                _id: { $hour: { date: '$createdAt', timezone: 'Asia/Tashkent' } },
-                visitors: { $addToSet: '$visitorId' },
-              },
-            },
-            { $project: { visitors: { $size: '$visitors' } } },
-          ],
-        },
+          ]),
+          aggregate<TrafficFacet['hourlyVisitors'][number]>([
+            { $group: { _id: { hour: hourExpression, visitor: '$visitorId' } } },
+            { $group: { _id: '$_id.hour', visitors: { $sum: 1 } } },
+          ]),
+        ]);
+        return { totals, sources, hours, hourlyVisitors };
       },
-    ]),
+    ),
     Visit.find(match)
       .sort({ createdAt: -1, _id: -1 })
       .skip((query.page - 1) * query.limit)
       .limit(query.limit),
-    Visit.countDocuments(match),
   ]);
-  const data = stats[0] ?? { totals: [], sources: [], hours: [], hourlyVisitors: [] };
+  const total = data.totals[0]?.visits ?? 0;
   const sources = ['google', 'link', 'direct'].map((source) => ({
     source,
     visits: 0,

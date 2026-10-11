@@ -5,6 +5,7 @@ import { asyncHandler, noContent, ok } from '../../common/utils/http';
 import { UserRole, type AuthenticatedRequest } from '../../common/types';
 import * as adminService from './admin.service';
 import * as statsService from './stats.service';
+import { getBroadcast } from './broadcast.service';
 import { trafficQuerySchema, trafficReport, type TrafficQuery } from '../traffic/traffic.service';
 import {
   adjustBalanceSchema,
@@ -247,6 +248,13 @@ adminRouter.get(
 );
 
 /* — broadcasts and the journal — */
+adminRouter.get(
+  '/broadcasts/:id',
+  validate({ params: idParamSchema }),
+  asyncHandler<AdminRequest>(async (req, res) => {
+    ok(res, await getBroadcast(id(req)));
+  }),
+);
 adminRouter.post(
   '/broadcasts',
   validate({ body: broadcastSchema }),

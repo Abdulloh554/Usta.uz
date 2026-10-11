@@ -24,6 +24,7 @@ export interface IUser {
   acceptedRulesAt?: Date;
   pushTokens: string[];
   lastSeenAt?: Date;
+  orderWriteVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -92,15 +93,19 @@ const userSchema = new Schema<IUser, UserModel, IUserMethods>(
     acceptedRulesAt: { type: Date },
     pushTokens: { type: [String], default: [] },
     lastSeenAt: { type: Date },
+    // A transaction writes this row before checking/creating a waiting job.
+    // Concurrent submissions then conflict and retry against the committed job.
+    orderWriteVersion: { type: Number, default: 0, select: false },
   },
   {
     timestamps: true,
     // The hash must never reach a response, even if a route forgets to project it out.
-    ...serializeOptions('passwordHash'),
+    ...serializeOptions('passwordHash', 'orderWriteVersion'),
   },
 );
 
 userSchema.index({ role: 1, isActive: 1 });
+userSchema.index({ isActive: 1, isBlocked: 1, role: 1, _id: 1 });
 userSchema.index({ createdAt: -1 });
 /** The matching grace window and the dashboard's "active today" both range over this. */
 userSchema.index({ lastSeenAt: -1 });

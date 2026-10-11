@@ -4,6 +4,7 @@ import { closeQueues } from './queues';
 import { createMatchingWorker } from './matching.worker';
 import { createNotificationWorker } from './notification.worker';
 import { clearLocalTimers, probeQueueSupport } from './scheduler';
+import { startBroadcastWorker, stopBroadcastWorker } from './broadcast.worker';
 
 let workers: Worker[] = [];
 
@@ -13,6 +14,7 @@ let workers: Worker[] = [];
  * in-process fallback is used instead.
  */
 export const startWorkers = async (): Promise<void> => {
+  startBroadcastWorker();
   if (workers.length > 0) return;
 
   if (!(await probeQueueSupport())) {
@@ -25,6 +27,7 @@ export const startWorkers = async (): Promise<void> => {
 };
 
 export const stopWorkers = async (): Promise<void> => {
+  await stopBroadcastWorker();
   clearLocalTimers();
   await Promise.allSettled(workers.map((worker) => worker.close()));
   workers = [];

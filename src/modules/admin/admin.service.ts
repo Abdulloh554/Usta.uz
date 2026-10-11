@@ -25,25 +25,20 @@ import { Order, type IOrder, type OrderDocument } from '../order/order.model';
 import { Chat, Message, type ChatDocument, type IChat, type IMessage } from '../chat/chat.model';
 import { Product, type IProduct, type ProductDocument } from '../product/product.model';
 import { Review, ReviewTarget, type IReview, type ReviewDocument } from '../review/review.model';
-import { Transaction, type ITransaction, type TransactionDocument } from '../wallet/transaction.model';
-import { Notification } from '../notification/notification.model';
-import { getNotificationQueue, NotificationJob } from '../../jobs/queues';
-import { isQueueCapable } from '../../jobs/scheduler';
+import {
+  Transaction,
+  type ITransaction,
+  type TransactionDocument,
+} from '../wallet/transaction.model';
 import { refundOrderFee } from '../wallet/wallet.service';
 import { recomputeRating } from '../review/review.service';
 import { notify } from '../notification/notification.service';
 import { abortMatching } from '../matching/matching.service';
 import { logoutEverywhere } from '../auth/auth.service';
-import {
-  AdminAction,
-  AdminLog,
-  AdminTarget,
-  type AdminLogDocument,
-} from './adminLog.model';
+import { AdminAction, AdminLog, AdminTarget, type AdminLogDocument } from './adminLog.model';
 import type {
   AdjustBalanceInput,
   AdminCancelOrderInput,
-  BroadcastInput,
   ListChatsInput,
   ListLogsInput,
   ListOrdersInput,
@@ -133,7 +128,12 @@ export const listUsers = async (input: ListUsersInput): Promise<Paginated<UserDo
 
   const skip = (input.page - 1) * input.limit;
   const [items, total] = await Promise.all([
-    User.find(filter).select('-pushTokens').sort(USER_SORT[input.sort]).skip(skip).limit(input.limit).exec(),
+    User.find(filter)
+      .select('-pushTokens')
+      .sort(USER_SORT[input.sort])
+      .skip(skip)
+      .limit(input.limit)
+      .exec(),
     User.countDocuments(filter),
   ]);
 
@@ -431,7 +431,8 @@ export const cancelOrder = async (
     throw new ConflictError('A completed job cannot be cancelled', 'ORDER_COMPLETED');
   }
 
-  const wasSearching = order.status === OrderStatus.PENDING || order.status === OrderStatus.MATCHING;
+  const wasSearching =
+    order.status === OrderStatus.PENDING || order.status === OrderStatus.MATCHING;
   const shouldCancel = order.status !== OrderStatus.DONE && order.status !== OrderStatus.CANCELLED;
 
   if (shouldCancel) {
@@ -450,7 +451,10 @@ export const cancelOrder = async (
       { new: true },
     );
     if (!updated) {
-      throw new ConflictError('The job changed while you were cancelling it — reload and try again', 'ORDER_CHANGED');
+      throw new ConflictError(
+        'The job changed while you were cancelling it — reload and try again',
+        'ORDER_CHANGED',
+      );
     }
     order.set(updated.toObject());
 
@@ -605,16 +609,25 @@ export const deleteMessage = async (adminId: string, messageId: string): Promise
     await chat.save();
   }
 
-  await record(adminId, AdminAction.MESSAGE_DELETED, AdminTarget.MESSAGE, messageId, "Xabar o'chirildi", {
-    chatId: message.chat.toString(),
-    senderId: message.sender.toString(),
-    text: message.text.slice(0, 200),
-  });
+  await record(
+    adminId,
+    AdminAction.MESSAGE_DELETED,
+    AdminTarget.MESSAGE,
+    messageId,
+    "Xabar o'chirildi",
+    {
+      chatId: message.chat.toString(),
+      senderId: message.sender.toString(),
+      text: message.text.slice(0, 200),
+    },
+  );
 };
 
 /* ───────────────────────────── products ──────────────────────────── */
 
-export const listProducts = async (input: ListProductsInput): Promise<Paginated<ProductDocument>> => {
+export const listProducts = async (
+  input: ListProductsInput,
+): Promise<Paginated<ProductDocument>> => {
   const filter: FilterQuery<IProduct> = {};
   if (input.status === 'active') filter.isActive = true;
   if (input.status === 'hidden') filter.isActive = false;
@@ -647,7 +660,10 @@ export const setProductActive = async (
   // Hiding is moderation and can be undone; a seller's own delete cannot be
   // undone by anyone else — it would put back something they took down.
   if (isActive && product.deletedAt) {
-    throw new ConflictError('The seller deleted this product; it cannot be restored', 'PRODUCT_DELETED');
+    throw new ConflictError(
+      'The seller deleted this product; it cannot be restored',
+      'PRODUCT_DELETED',
+    );
   }
   product.isActive = isActive;
   await product.save();
@@ -687,11 +703,19 @@ export const listReviews = async (input: ListReviewsInput): Promise<Paginated<Re
   ]);
 
   // `target` is polymorphic — a pro or a product — so it is resolved by hand.
-  const masterIds = reviews.filter((r) => r.targetType === ReviewTarget.MASTER).map((r) => r.target);
-  const productIds = reviews.filter((r) => r.targetType === ReviewTarget.PRODUCT).map((r) => r.target);
+  const masterIds = reviews
+    .filter((r) => r.targetType === ReviewTarget.MASTER)
+    .map((r) => r.target);
+  const productIds = reviews
+    .filter((r) => r.targetType === ReviewTarget.PRODUCT)
+    .map((r) => r.target);
   const [masters, products] = await Promise.all([
-    User.find({ _id: { $in: masterIds } }).select('firstName lastName').lean(),
-    Product.find({ _id: { $in: productIds } }).select('title').lean(),
+    User.find({ _id: { $in: masterIds } })
+      .select('firstName lastName')
+      .lean(),
+    Product.find({ _id: { $in: productIds } })
+      .select('title')
+      .lean(),
   ]);
   const names = new Map<string, string>([
     ...masters.map((m): [string, string] => [m._id.toString(), `${m.firstName} ${m.lastName}`]),
@@ -763,103 +787,7 @@ export const listTransactions = async (
 
 /* ──────────────────────────── broadcasts ─────────────────────────── */
 
-/**
- * Recipients per batch. Each batch is one insert and one queue call, so this is
- * a memory bound rather than a concurrency one — it caps how many notification
- * documents are held at once while an announcement to the whole user base runs.
- */
-const BROADCAST_BATCH = 500;
-
-export const broadcast = async (
-  adminId: string,
-  input: BroadcastInput,
-): Promise<{ recipients: number; delivered: number }> => {
-  const filter: FilterQuery<IUser> = {
-    isActive: true,
-    isBlocked: false,
-    role: input.audience === 'all' ? { $ne: UserRole.ADMIN } : input.audience,
-  };
-  // Only what an announcement needs: an audience of every user must not be
-  // pulled into memory as whole documents.
-  const users = await User.find(filter).select('_id pushTokens').lean();
-
-  let delivered = 0;
-  for (let start = 0; start < users.length; start += BROADCAST_BATCH) {
-    const batch = users.slice(start, start + BROADCAST_BATCH);
-    const tokensOf = new Map(batch.map((user) => [user._id.toString(), user.pushTokens ?? []]));
-
-    /**
-     * One insert for the whole batch rather than one per recipient. Going
-     * through `notify` would re-read each user it had just been handed and
-     * write their row on its own round trip — two database operations per
-     * person, which for an announcement to the entire user base is the
-     * difference between one query and tens of thousands.
-     */
-    // eslint-disable-next-line no-await-in-loop
-    const created = await Notification.insertMany(
-      batch.map((user) => ({
-        user: user._id,
-        type: NotificationType.ANNOUNCEMENT,
-        title: input.title,
-        body: input.body,
-        data: { kind: 'announcement' },
-      })),
-      { ordered: false },
-    );
-
-    created.forEach((notification) => {
-      emitToUser(notification.user.toString(), SocketEvent.NOTIFICATION, notification.toJSON());
-    });
-
-    /**
-     * The device pushes are queued in a single call. Where there is no queue
-     * they are dropped rather than sent inline: thousands of sequential FCM
-     * calls would hold this request open for minutes, and the in-app
-     * notification — the part the panel reports on — has already landed.
-     */
-    const pushes = created
-      .map((notification) => ({
-        notification,
-        tokens: tokensOf.get(notification.user.toString()) ?? [],
-      }))
-      .filter(({ tokens }) => tokens.length > 0);
-
-    if (pushes.length > 0 && isQueueCapable()) {
-      // eslint-disable-next-line no-await-in-loop
-      await getNotificationQueue()
-        .addBulk(
-          pushes.map(({ notification, tokens }) => ({
-            name: NotificationJob.PUSH,
-            data: {
-              notificationId: notification._id.toString(),
-              tokens,
-              title: notification.title,
-              body: notification.body,
-              data: { ...notification.data, type: notification.type },
-              ringing: false,
-            },
-          })),
-        )
-        .catch((error: unknown) => {
-          logger.warn('Could not queue broadcast pushes', {
-            message: error instanceof Error ? error.message : String(error),
-          });
-        });
-    }
-
-    delivered += created.length;
-  }
-
-  await record(adminId, AdminAction.BROADCAST_SENT, AdminTarget.BROADCAST, null, input.title, {
-    audience: input.audience,
-    title: input.title,
-    body: input.body,
-    recipients: users.length,
-    delivered,
-  });
-
-  return { recipients: users.length, delivered };
-};
+export { queueBroadcast as broadcast } from './broadcast.service';
 
 /* ───────────────────────────── journal ───────────────────────────── */
 

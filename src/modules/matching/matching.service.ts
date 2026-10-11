@@ -1,4 +1,6 @@
 import mongoose, { type PipelineStage } from 'mongoose';
+import { randomUUID } from 'node:crypto';
+import { deleteIfValue, renewIfValue } from '../../common/utils/redisAtomic';
 import { env } from '../../config/env';
 import { logger } from '../../config/logger';
 import { keys, redis } from '../../config/redis';
@@ -23,7 +25,12 @@ import { emitToUser } from '../../sockets/emitter';
 import { SocketEvent, type OrderOfferPayload } from '../../sockets/events';
 import { cancelOfferTimeout, offerTimeoutJobId, scheduleOfferTimeout } from '../../jobs/queues';
 import { cancelLocal, isQueueCapable, scheduleLocal } from '../../jobs/scheduler';
-import { CATEGORY_CRAFTS, type MatchCandidate, type MatchingRunState, type OutstandingOffer } from './matching.types';
+import {
+  CATEGORY_CRAFTS,
+  type MatchCandidate,
+  type MatchingRunState,
+  type OutstandingOffer,
+} from './matching.types';
 
 const OFFER_TIMEOUT = env.MATCH_OFFER_TIMEOUT_SECONDS;
 
@@ -53,7 +60,8 @@ export const buildCandidates = async (order: OrderDocument): Promise<MatchCandid
 
   const seenSince = new Date(Date.now() - env.MATCH_OFFLINE_GRACE_MINUTES * 60_000);
 
-  const hasLocation = Array.isArray(order.location?.coordinates) && order.location.coordinates.length === 2;
+  const hasLocation =
+    Array.isArray(order.location?.coordinates) && order.location.coordinates.length === 2;
 
   const pipeline: PipelineStage[] = hasLocation
     ? [
@@ -161,9 +169,12 @@ const disarmOfferTimeout = async (orderId: string, masterId: string): Promise<vo
 };
 
 const clearOffer = async (orderId: string, masterId: string): Promise<void> => {
+  const raw = await redis.get(keys.matchOffer(orderId));
   await Promise.all([
-    redis.del(keys.matchOffer(orderId)),
-    redis.del(keys.masterOffer(masterId)),
+    raw && (JSON.parse(raw) as OutstandingOffer).masterId === masterId
+      ? deleteIfValue(keys.matchOffer(orderId), raw)
+      : Promise.resolve(0),
+    deleteIfValue(keys.masterOffer(masterId), orderId),
     disarmOfferTimeout(orderId, masterId),
   ]);
 };
@@ -197,7 +208,9 @@ const buildOfferPayload = async (
     client: {
       id: order.client.toString(),
       name: client ? `${client.firstName} ${client.lastName.charAt(0)}.` : '',
-      initials: client ? `${client.firstName.charAt(0)}${client.lastName.charAt(0)}`.toUpperCase() : '',
+      initials: client
+        ? `${client.firstName.charAt(0)}${client.lastName.charAt(0)}`.toUpperCase()
+        : '',
     },
     distanceKm: null,
     region: order.region ?? null,
@@ -208,8 +221,8 @@ const buildOfferPayload = async (
 };
 
 /** Offers the job to the next queued pro, or gives up when the queue runs dry. */
-export const offerNext = async (orderId: string): Promise<MatchingRunState> => {
-  const order = await Order.findById(orderId);
+const offerNextUnlocked = async (orderId: string): Promise<MatchingRunState> => {
+  let order = await Order.findById(orderId);
   if (!order) throw new NotFoundError('Order');
 
   // A job that has moved on — accepted, cancelled, completed — stops the run.
@@ -218,19 +231,43 @@ export const offerNext = async (orderId: string): Promise<MatchingRunState> => {
     return { orderId, offered: order.offers.length, remaining: 0, current: null };
   }
 
+  const outstanding = await readOffer(orderId);
+  if (outstanding && outstanding.expiresAt > Date.now()) {
+    return {
+      orderId,
+      offered: order.offers.length,
+      remaining: await redis.llen(keys.matchQueue(orderId)),
+      current: outstanding.masterId,
+    };
+  }
+
   // A pro already ringing for another job is skipped rather than handed a second
   // offer: the phone can ring for one job at a time, and the second offer would
   // overwrite the first in `masterOffer`.
   let masterId = await redis.lpop(keys.matchQueue(orderId));
   while (masterId) {
-    const busyWith = await redis.get(keys.masterOffer(masterId));
-    if (!busyWith || busyWith === orderId) break;
+    // Atomic across every API/worker process. GET followed by SET allowed two
+    // jobs to reserve the same pro and overwrite their ringing card.
+    const reserved = await redis.set(
+      keys.masterOffer(masterId),
+      orderId,
+      'EX',
+      OFFER_TIMEOUT + 10,
+      'NX',
+    );
+    if (reserved === 'OK') break;
     masterId = await redis.lpop(keys.matchQueue(orderId));
   }
 
   if (!masterId) {
-    order.status = OrderStatus.PENDING;
-    await order.save();
+    await Order.updateOne(
+      {
+        _id: orderId,
+        status: { $in: [OrderStatus.PENDING, OrderStatus.MATCHING] },
+        master: { $exists: false },
+      },
+      { $set: { status: OrderStatus.PENDING } },
+    );
     emitToUser(order.client.toString(), SocketEvent.ORDER_NO_MASTERS, {
       orderId,
       offered: order.offers.length,
@@ -244,20 +281,43 @@ export const offerNext = async (orderId: string): Promise<MatchingRunState> => {
 
   const offer: OutstandingOffer = { orderId, masterId, offeredAt: now, expiresAt };
 
-  await Promise.all([
+  try {
     // The Redis entry outlives the timeout slightly, so a worker that fires a
     // beat late still finds the offer it is meant to expire.
-    redis.set(keys.matchOffer(orderId), JSON.stringify(offer), 'EX', OFFER_TIMEOUT + 10),
-    redis.set(keys.masterOffer(masterId), orderId, 'EX', OFFER_TIMEOUT + 10),
-  ]);
+    await redis.set(keys.matchOffer(orderId), JSON.stringify(offer), 'EX', OFFER_TIMEOUT + 10);
 
-  order.status = OrderStatus.MATCHING;
-  order.offers.push({ master: new mongoose.Types.ObjectId(masterId), offeredAt: new Date(now), outcome: 'pending' });
-  await order.save();
+    const updated = await Order.findOneAndUpdate(
+      {
+        _id: orderId,
+        status: { $in: [OrderStatus.PENDING, OrderStatus.MATCHING] },
+        master: { $exists: false },
+      },
+      {
+        $set: { status: OrderStatus.MATCHING },
+        $push: {
+          offers: {
+            master: new mongoose.Types.ObjectId(masterId),
+            offeredAt: new Date(now),
+            outcome: 'pending',
+          },
+        },
+      },
+      { new: true },
+    );
+    if (!updated) throw new ConflictError('Job is no longer searching', 'ORDER_NOT_SEARCHING');
+    order = updated;
 
-  await armOfferTimeout(orderId, masterId);
+    await armOfferTimeout(orderId, masterId);
+  } catch (error) {
+    await clearOffer(orderId, masterId);
+    throw error;
+  }
 
-  emitToUser(masterId, SocketEvent.ORDER_OFFER, await buildOfferPayload(order, expiresAt, OFFER_TIMEOUT));
+  emitToUser(
+    masterId,
+    SocketEvent.ORDER_OFFER,
+    await buildOfferPayload(order, expiresAt, OFFER_TIMEOUT),
+  );
 
   await publishSearchState(order);
 
@@ -280,6 +340,27 @@ export const offerNext = async (orderId: string): Promise<MatchingRunState> => {
   logger.info('Job offered', { orderId, masterId, timeout: OFFER_TIMEOUT });
   const remaining = await redis.llen(keys.matchQueue(orderId));
   return { orderId, offered: order.offers.length, remaining, current: masterId };
+};
+
+/** Serialises advancement for one job while independent jobs still run in parallel. */
+export const offerNext = async (orderId: string): Promise<MatchingRunState> => {
+  const key = `matching:advance:${orderId}`;
+  const owner = randomUUID();
+  if ((await redis.set(key, owner, 'EX', 60, 'NX')) !== 'OK') {
+    throw new ConflictError('Matching is already advancing; retry shortly', 'MATCHING_BUSY');
+  }
+  const renewal = setInterval(() => {
+    void renewIfValue(key, owner, 60).catch((error: unknown) => {
+      logger.error('Could not renew matching lease', { orderId, message: String(error) });
+    });
+  }, 20_000);
+  renewal.unref();
+  try {
+    return await offerNextUnlocked(orderId);
+  } finally {
+    clearInterval(renewal);
+    await deleteIfValue(key, owner);
+  }
 };
 
 /** Entry point: builds the queue and makes the first offer. */
@@ -313,26 +394,41 @@ export const passOffer = async (orderId: string, masterId: string): Promise<Matc
     throw new ConflictError('This job is no longer offered to you', 'OFFER_NOT_YOURS');
   }
 
-  await Order.updateOne(
-    { _id: orderId, 'offers.master': masterId, 'offers.outcome': 'pending' },
+  const updated = await Order.updateOne(
+    {
+      _id: orderId,
+      status: OrderStatus.MATCHING,
+      offers: { $elemMatch: { master: masterId, outcome: 'pending' } },
+    },
     { $set: { 'offers.$.outcome': 'passed', 'offers.$.respondedAt': new Date() } },
   );
+
+  if (!updated.modifiedCount) throw new ConflictError('Offer already answered', 'OFFER_NOT_YOURS');
 
   await clearOffer(orderId, masterId);
   return offerNext(orderId);
 };
 
 /** Called by the BullMQ worker when nobody answered in time. */
-export const expireOffer = async (orderId: string, masterId: string): Promise<MatchingRunState | null> => {
+export const expireOffer = async (
+  orderId: string,
+  masterId: string,
+): Promise<MatchingRunState | null> => {
   const offer = await readOffer(orderId);
 
   // The offer was already answered, or superseded — nothing to expire.
   if (!offer || offer.masterId !== masterId) return null;
 
-  await Order.updateOne(
-    { _id: orderId, 'offers.master': masterId, 'offers.outcome': 'pending' },
+  const updated = await Order.updateOne(
+    {
+      _id: orderId,
+      status: OrderStatus.MATCHING,
+      offers: { $elemMatch: { master: masterId, outcome: 'pending' } },
+    },
     { $set: { 'offers.$.outcome': 'timeout', 'offers.$.respondedAt': new Date() } },
   );
+
+  if (!updated.modifiedCount) return null;
 
   await clearOffer(orderId, masterId);
   emitToUser(masterId, SocketEvent.ORDER_OFFER_REVOKED, { orderId, reason: 'timeout' });
@@ -438,7 +534,7 @@ export const acceptOffer = async (
     }
 
     await Order.updateOne(
-      { _id: orderId, 'offers.master': masterId, 'offers.outcome': 'pending' },
+      { _id: orderId, offers: { $elemMatch: { master: masterId, outcome: 'pending' } } },
       { $set: { 'offers.$.outcome': 'accepted', 'offers.$.respondedAt': acceptedAt } },
       options,
     );
@@ -479,7 +575,7 @@ export const acceptOffer = async (
     if (transaction) order.feeTransaction = transaction._id;
     await order.save(options);
 
-    return { order, chatId: (chat!._id).toString() };
+    return { order, chatId: chat!._id.toString() };
   };
 
   let result: { order: OrderDocument; chatId: string };

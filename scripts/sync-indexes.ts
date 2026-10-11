@@ -55,6 +55,7 @@ const run = async (): Promise<void> => {
   await import('../src/modules/notification/notification.model');
   await import('../src/modules/admin/adminLog.model');
   await import('../src/modules/traffic/traffic.model');
+  await import('../src/modules/admin/broadcast.model');
 
   await connectDatabase();
 
@@ -79,7 +80,9 @@ const run = async (): Promise<void> => {
 
       const missing = model.schema
         .indexes()
-        .map(([fields, options]) => (options?.name as string | undefined) ?? defaultIndexName(fields))
+        .map(
+          ([fields, options]) => (options?.name as string | undefined) ?? defaultIndexName(fields),
+        )
         .filter((indexName) => !present.has(indexName));
 
       if (missing.length > 0) {
