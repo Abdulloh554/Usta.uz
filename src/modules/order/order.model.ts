@@ -21,6 +21,7 @@ export interface IOrder {
   category: OrderCategory;
   status: OrderStatus;
   address?: string;
+  landmark?: string;
   region?: string;
   location?: {
     type: 'Point';
@@ -64,7 +65,13 @@ const orderSchema = new Schema<IOrder, OrderModel>(
     code: { type: String, required: true, unique: true, uppercase: true, trim: true },
     client: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     master: { type: Schema.Types.ObjectId, ref: 'User', index: true },
-    title: { type: String, required: [true, 'Title is required'], trim: true, minlength: 3, maxlength: 120 },
+    title: {
+      type: String,
+      required: [true, 'Title is required'],
+      trim: true,
+      minlength: 3,
+      maxlength: 120,
+    },
     description: {
       type: String,
       required: [true, 'Description is required'],
@@ -79,6 +86,7 @@ const orderSchema = new Schema<IOrder, OrderModel>(
       default: OrderStatus.PENDING,
     },
     address: { type: String, trim: true, maxlength: 300 },
+    landmark: { type: String, trim: true, maxlength: 300 },
     region: { type: String, trim: true, index: true },
     location: {
       type: { type: String, enum: ['Point'] },

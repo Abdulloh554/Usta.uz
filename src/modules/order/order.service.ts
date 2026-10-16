@@ -100,6 +100,7 @@ export const createOrder = async (
         description: input.description,
         category: input.category,
         address: input.address,
+        landmark: input.landmark,
         region: input.region,
         location: input.location ? { type: 'Point', coordinates: input.location } : undefined,
         photos: input.photos,
@@ -187,6 +188,11 @@ export const getOrderForUser = async (orderId: string, userId: string): Promise<
     throw new ForbiddenError('This job is not yours', 'ORDER_FORBIDDEN');
   }
 
+  // The full job address is revealed only to its owner and the assigned master.
+  if (clientId !== userId && masterId !== userId) {
+    order.set({ address: undefined, landmark: undefined, location: undefined });
+  }
+
   return order;
 };
 
@@ -228,6 +234,7 @@ export const feedForMaster = async (
     // No phone number here: the pro has not paid for this job, and the client's
     // number is exactly what the fee buys. It appears once they accept.
     Order.find(filter)
+      .select('-address -landmark -location')
       .populate('client', 'firstName lastName avatarUrl')
       .sort({ createdAt: -1 })
       .skip(skip)

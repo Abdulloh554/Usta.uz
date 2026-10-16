@@ -113,13 +113,30 @@ export const buildCandidates = async (order: OrderDocument): Promise<MatchCandid
     },
   );
 
-  const rows = await MasterProfile.aggregate<{
+  type CandidateRow = {
     masterId: string;
     rating: number;
     ratingCount: number;
     completedJobs: number;
     distanceMeters?: number;
-  }>(pipeline);
+  };
+  let rows = await MasterProfile.aggregate<CandidateRow>(pipeline);
+
+  // Legacy profiles often have no GPS point. If no nearby located master is
+  // available, retain those profiles as candidates with unknown distance.
+  // A master whose known position is outside the radius is never added here.
+  if (hasLocation && rows.length === 0) {
+    rows = await MasterProfile.aggregate<CandidateRow>([
+      {
+        $match: {
+          ...baseMatch,
+          'location.coordinates': { $exists: false },
+          ...(order.region ? { regions: order.region } : {}),
+        },
+      },
+      ...pipeline.slice(1),
+    ]);
+  }
 
   return rows.map((row) => ({
     masterId: row.masterId,

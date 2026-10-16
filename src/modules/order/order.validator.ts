@@ -11,6 +11,7 @@ export const createOrderSchema = z.object({
   description: z.string().trim().min(10, 'Describe the problem in a little more detail').max(2000),
   category: z.nativeEnum(OrderCategory),
   address: z.string().trim().max(300).optional(),
+  landmark: z.string().trim().max(300).optional(),
   region: z.string().trim().max(60).optional(),
   location: coordinates.optional(),
   photos: z.array(z.string().url()).max(6).default([]),
