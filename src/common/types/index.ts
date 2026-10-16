@@ -67,7 +67,7 @@ export const NotificationType = {
 } as const;
 export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType];
 
-/** The 12 trades the design's craft picker offers. */
+/** Supported master specialties. */
 export const Craft = {
   ELECTRICIAN: 'electrician',
   PLUMBER: 'plumber',
@@ -81,10 +81,21 @@ export const Craft = {
   DOORS_WINDOWS: 'doors_windows',
   MOVING: 'moving',
   CLEANING: 'cleaning',
+  ROOFER: 'roofer',
+  WELDER: 'welder',
+  MASON: 'mason',
+  FLOORING: 'flooring',
+  HEATING: 'heating',
+  SECURITY: 'security',
+  GARDENER: 'gardener',
+  PEST_CONTROL: 'pest_control',
+  MECHANIC: 'mechanic',
+  TAILOR: 'tailor',
+  PHONE_REPAIR: 'phone_repair',
 } as const;
 export type Craft = (typeof Craft)[keyof typeof Craft];
 
-/** The 6 job categories the design's "quick pick" grid and new-job sheet offer. */
+/** Supported service categories; existing values remain backwards compatible. */
 export const OrderCategory = {
   ELECTRICAL: 'electrical',
   PLUMBING: 'plumbing',
@@ -92,6 +103,26 @@ export const OrderCategory = {
   ELECTRONICS: 'electronics',
   CLEANING: 'cleaning',
   MOVING: 'moving',
+  PAINTING: 'painting',
+  TILING: 'tiling',
+  PLASTERING: 'plastering',
+  CARPENTRY: 'carpentry',
+  DOORS_WINDOWS: 'doors_windows',
+  AC_SERVICE: 'ac_service',
+  APPLIANCES: 'appliances',
+  COMPUTERS: 'computers',
+  FURNITURE: 'furniture',
+  ROOFING: 'roofing',
+  WELDING: 'welding',
+  MASONRY: 'masonry',
+  FLOORING: 'flooring',
+  HEATING: 'heating',
+  SECURITY: 'security',
+  GARDENING: 'gardening',
+  PEST_CONTROL: 'pest_control',
+  AUTO_REPAIR: 'auto_repair',
+  TAILORING: 'tailoring',
+  PHONE_REPAIR: 'phone_repair',
 } as const;
 export type OrderCategory = (typeof OrderCategory)[keyof typeof OrderCategory];
 

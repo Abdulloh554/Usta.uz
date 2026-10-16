@@ -6,6 +6,13 @@ import { UserRole, type AuthenticatedRequest } from '../../common/types';
 import * as adminService from './admin.service';
 import * as statsService from './stats.service';
 import { getBroadcast } from './broadcast.service';
+import {
+  assistantSchema,
+  assistantStatus,
+  askAssistant,
+  type AssistantInput,
+} from './assistant.service';
+import { assistantLimiter } from '../../common/middlewares/rateLimit.middleware';
 import { trafficQuerySchema, trafficReport, type TrafficQuery } from '../traffic/traffic.service';
 import {
   adjustBalanceSchema,
@@ -48,6 +55,18 @@ const id = (req: AdminRequest): string => req.params.id as string;
 export const adminRouter = Router();
 
 adminRouter.use(authenticate, authorize(UserRole.ADMIN));
+
+adminRouter.get('/assistant/status', (_req, res) => {
+  ok(res, assistantStatus());
+});
+adminRouter.post(
+  '/assistant',
+  assistantLimiter,
+  validate({ body: assistantSchema }),
+  asyncHandler(async (req, res) => {
+    ok(res, await askAssistant(req.body as AssistantInput));
+  }),
+);
 
 adminRouter.get(
   '/stats/traffic',

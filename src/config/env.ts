@@ -140,6 +140,8 @@ const schema = z.object({
   MATCH_RADIUS_KM: z.coerce.number().positive().default(15),
 
   SENTRY_DSN: z.string().default(''),
+  GROQ_API_KEY: z.string().default(''),
+  GROQ_MODEL: z.string().min(1).default('openai/gpt-oss-120b'),
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'http', 'debug']).default('info'),
 
   /** Requests per minute under the API prefix, per signed-in user or per IP. */

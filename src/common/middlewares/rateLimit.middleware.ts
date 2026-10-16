@@ -116,6 +116,8 @@ export const smsLimiter = build('sms', 60 * 60_000, 5, 'Too many SMS requests, t
 /** Posting jobs — stops a client flooding the matching queue. */
 export const orderCreateLimiter = build('order', 60 * 60_000, 20, 'Too many jobs posted, try again later');
 
+export const assistantLimiter = build('assistant', 10 * 60_000, 20, 'AI so‘rovlar limiti. 10 daqiqadan so‘ng qayta urining.');
+
 /**
  * Payment callbacks are unauthenticated by nature, so they are the one money
  * path a stranger can reach. The ceiling is well above what Payme and Click
