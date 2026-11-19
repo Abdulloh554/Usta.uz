@@ -101,6 +101,30 @@ export const broadcastSchema = z.object({
   body: z.string().trim().min(2).max(500),
 });
 
+/* — manual payments — */
+const TOP_UP_MIN = 1_000;
+const TOP_UP_MAX = 10_000_000;
+
+export const listPaymentsSchema = paginationSchema.extend({
+  status: z.enum(['pending', 'success', 'failed', 'all']).default('pending'),
+  search,
+});
+
+export const approvePaymentSchema = z
+  .object({
+    /** Credit a different figure than requested — e.g. the transfer that actually arrived. */
+    amount: z.number().int().min(TOP_UP_MIN).max(TOP_UP_MAX).optional(),
+  })
+  .default({});
+
+export const rejectPaymentSchema = z.object({
+  reason: z.string().trim().min(3).max(300),
+});
+
+export const resetPasswordSchema = z.object({
+  password: z.string().min(6).max(128),
+});
+
 export const listLogsSchema = paginationSchema.extend({
   action: z.nativeEnum(AdminAction).optional(),
   admin: objectIdSchema.optional(),
@@ -117,3 +141,7 @@ export type ListReviewsInput = z.infer<typeof listReviewsSchema>;
 export type ListTransactionsInput = z.infer<typeof listTransactionsSchema>;
 export type BroadcastInput = z.infer<typeof broadcastSchema>;
 export type ListLogsInput = z.infer<typeof listLogsSchema>;
+export type ListPaymentsInput = z.infer<typeof listPaymentsSchema>;
+export type ApprovePaymentInput = z.infer<typeof approvePaymentSchema>;
+export type RejectPaymentInput = z.infer<typeof rejectPaymentSchema>;
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;

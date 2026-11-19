@@ -57,8 +57,9 @@ services:
       - key: BCRYPT_ROUNDS
         value: '12'
 
-      # An empty value allows every origin, which is what the mobile app needs
-      # until the landing page has a domain of its own.
+      # Required in production: the web, admin and landing domains, comma-separated.
+      # An empty value allows every browser origin (the server logs a warning at
+      # start-up). The mobile app sends no Origin header and is unaffected.
       - key: CORS_ORIGINS
         sync: false
 
@@ -73,9 +74,16 @@ services:
       - key: ESKIZ_FROM
         value: '4546'
 
-      # 0 = payments off for launch; set to 4999 once Payme / Click are live.
+      # The per-job fee a pro pays on accept; 0 turns payments off.
       - key: ORDER_ACCEPT_FEE
-        value: '0'
+        value: '4999'
+      # Manual top-ups (MVP): the card pros transfer to, set in the dashboard.
+      - key: MANUAL_PAYMENT_CARD
+        sync: false
+      - key: MANUAL_PAYMENT_HOLDER
+        sync: false
+      - key: MANUAL_PAYMENT_NOTE
+        sync: false
 
   # ─── Redis ───────────────────────────────────────────────────────────────
   - name: ustauz-keyvalue

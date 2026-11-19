@@ -48,11 +48,19 @@ export const PaymentProvider = {
   PAYME: 'payme',
   CLICK: 'click',
   BALANCE: 'balance',
+  /** A card transfer the user reports and an admin confirms by hand. */
+  MANUAL: 'manual',
 } as const;
 export type PaymentProvider = (typeof PaymentProvider)[keyof typeof PaymentProvider];
 
-/** The providers a user can actually top up with — `balance` is internal-only. */
-export type TopUpProvider = typeof PaymentProvider.PAYME | typeof PaymentProvider.CLICK;
+/**
+ * The provider a user tops up with in the MVP: a manual card transfer that an
+ * admin confirms. `balance` is internal-only.
+ */
+export type TopUpProvider = typeof PaymentProvider.MANUAL;
+
+/** Online checkout providers (Payme/Click) — kept behind their keys, off in the MVP. */
+export type CheckoutProvider = typeof PaymentProvider.PAYME | typeof PaymentProvider.CLICK;
 
 export const NotificationType = {
   ORDER_OFFER: 'order_offer',
@@ -62,6 +70,8 @@ export const NotificationType = {
   NEW_MESSAGE: 'new_message',
   REVIEW_RECEIVED: 'review_received',
   WALLET_TOPPED_UP: 'wallet_topped_up',
+  /** An admin turned down a manual top-up request. data: `{ amount, reason }`. */
+  WALLET_TOP_UP_REJECTED: 'wallet_top_up_rejected',
   /** A message the team broadcasts from the admin panel. */
   ANNOUNCEMENT: 'announcement',
 } as const;

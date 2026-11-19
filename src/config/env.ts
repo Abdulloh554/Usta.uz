@@ -99,11 +99,17 @@ const schema = z.object({
 
   /**
    * The pro pays this, once, when accepting a job. The app takes no cut of the
-   * work itself. 0 — the launch default — turns payments off entirely: accepting
-   * is free, there is no sign-up bonus and top-ups are refused. Set it back to
-   * 4999 once Payme / Click are connected.
+   * work itself. 0 turns payments off entirely: accepting is free and
+   * top-ups are refused.
    */
-  ORDER_ACCEPT_FEE: z.coerce.number().int().nonnegative().default(0),
+  ORDER_ACCEPT_FEE: z.coerce.number().int().nonnegative().default(4999),
+  /**
+   * Manual top-ups (MVP): the pro transfers to this card, then files a request
+   * an admin confirms. Shown to the pro on `GET /wallet`; empty means unset.
+   */
+  MANUAL_PAYMENT_CARD: z.string().default(''),
+  MANUAL_PAYMENT_HOLDER: z.string().default(''),
+  MANUAL_PAYMENT_NOTE: z.string().default(''),
   PAYME_MERCHANT_ID: z.string().default(''),
   PAYME_KEY: z.string().default(''),
   PAYME_CHECKOUT_URL: z.string().default('https://checkout.paycom.uz'),
@@ -190,5 +196,10 @@ export const isDevelopment = env.NODE_ENV === 'development';
 
 /** Read on every call rather than captured once, so the switch is a single env var. */
 export const paymentsEnabled = (): boolean => env.ORDER_ACCEPT_FEE > 0;
+
+/** Payme / Click are only reachable once their keys are configured. */
+export const paymeConfigured = (): boolean => Boolean(env.PAYME_MERCHANT_ID && env.PAYME_KEY);
+export const clickConfigured = (): boolean =>
+  Boolean(env.CLICK_MERCHANT_ID && env.CLICK_SERVICE_ID && env.CLICK_SECRET_KEY);
 
 export type Env = typeof env;

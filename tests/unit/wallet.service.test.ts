@@ -16,12 +16,43 @@ import {
 } from '../../src/common/types';
 import { BadRequestError, ConflictError, NotFoundError } from '../../src/common/errors/ApiError';
 import { makeClient, makeMaster, makeOrder } from '../helpers/factories';
+import { env } from '../../src/config/env';
+
+/**
+ * Online checkout is refused unless the provider's keys are set, so this suite
+ * configures throwaway ones and restores the originals afterwards.
+ */
+const settings = env as unknown as Record<string, string>;
+const PROVIDER_KEYS = {
+  PAYME_MERCHANT_ID: 'test-merchant',
+  PAYME_KEY: 'test-payme-key',
+  CLICK_MERCHANT_ID: 'test-merchant',
+  CLICK_SERVICE_ID: 'test-service',
+  CLICK_SECRET_KEY: 'test-click-secret',
+};
+const originalKeys: Record<string, string> = {};
+
+beforeAll(() => {
+  Object.entries(PROVIDER_KEYS).forEach(([key, value]) => {
+    originalKeys[key] = settings[key] as string;
+    settings[key] = value;
+  });
+});
+
+afterAll(() => {
+  Object.assign(settings, originalKeys);
+});
 
 describe('wallet service', () => {
   describe('getBalance', () => {
     it('returns the balance alongside the current job fee', async () => {
       const master = await makeMaster({ balance: 25_000 });
-      expect(await getBalance(master.id as string)).toEqual({ balance: 25_000, fee: 4999 });
+      expect(await getBalance(master.id as string)).toMatchObject({
+        balance: 25_000,
+        fee: 4999,
+        manualPayment: { card: expect.any(String), holder: expect.any(String) },
+        pendingTopUp: null,
+      });
     });
 
     it('throws for a user who does not exist', async () => {
@@ -69,6 +100,19 @@ describe('wallet service', () => {
   });
 
   describe('confirmTopUp', () => {
+    it('refuses anything that is not an online top-up', async () => {
+      const master = await makeMaster({ balance: 0 });
+      const fee = await Transaction.create({
+        user: master._id,
+        type: TransactionType.ORDER_FEE,
+        status: TransactionStatus.PENDING,
+        provider: PaymentProvider.CLICK,
+        amount: 5_000,
+      });
+      await expect(confirmTopUp(String(fee._id), 'x')).rejects.toThrow(NotFoundError);
+      expect((await User.findById(master._id))!.balance).toBe(0);
+    });
+
     it('credits the wallet and records the settlement', async () => {
       const master = await makeMaster({ balance: 1_000 });
       const { transactionId } = await startTopUp(master.id as string, {
@@ -127,7 +171,6 @@ describe('wallet service', () => {
 
     it('accepts a correctly signed callback', async () => {
       const crypto = await import('node:crypto');
-      const { env } = await import('../../src/config/env');
       const signString = crypto
         .createHash('md5')
         .update(
@@ -152,6 +195,23 @@ describe('wallet service', () => {
 
     it('rejects a signature of the wrong length without throwing', () => {
       expect(verifyClickSignature({ ...base, signString: 'short' })).toBe(false);
+    });
+
+    it('rejects everything when the secret is unset, even a digest of the empty key', async () => {
+      const crypto = await import('node:crypto');
+      const saved = settings.CLICK_SECRET_KEY as string;
+      settings.CLICK_SECRET_KEY = '';
+      try {
+        const signString = crypto
+          .createHash('md5')
+          .update(
+            [base.clickTransId, base.serviceId, '', base.merchantTransId, base.amount, base.action, base.signTime].join(''),
+          )
+          .digest('hex');
+        expect(verifyClickSignature({ ...base, signString })).toBe(false);
+      } finally {
+        settings.CLICK_SECRET_KEY = saved;
+      }
     });
   });
 
@@ -179,6 +239,30 @@ describe('wallet service', () => {
       // A second attempt is a no-op.
       expect(await refundOrderFee(order.id as string)).toBeNull();
       expect((await User.findById(master._id))!.balance).toBe(14_999);
+    });
+
+    it('refunds once when two calls race', async () => {
+      const client = await makeClient();
+      const master = await makeMaster({ balance: 0 });
+      const order = await makeOrder(client._id);
+      await Transaction.create({
+        user: master._id,
+        type: TransactionType.ORDER_FEE,
+        status: TransactionStatus.SUCCESS,
+        provider: PaymentProvider.BALANCE,
+        amount: -4999,
+        order: order._id,
+        description: 'fee',
+        settledAt: new Date(),
+      });
+
+      const results = await Promise.all(
+        [0, 1, 2, 3].map(() => refundOrderFee(order.id as string)),
+      );
+
+      expect(results.filter(Boolean)).toHaveLength(1);
+      expect((await User.findById(master._id))!.balance).toBe(4999);
+      expect(await Transaction.countDocuments({ order: order._id, type: TransactionType.REFUND })).toBe(1);
     });
 
     it('returns null when there was no fee to refund', async () => {

@@ -1,5 +1,5 @@
 import { redis, keys } from '../../config/redis';
-import { env, paymentsEnabled } from '../../config/env';
+import { env } from '../../config/env';
 import { logger } from '../../config/logger';
 import { smsProvider } from '../../config/sms';
 import {
@@ -17,16 +17,9 @@ import {
   ttlSeconds,
   verifyRefreshToken,
 } from '../../common/utils/token';
-import {
-  Language,
-  PaymentProvider,
-  TransactionStatus,
-  TransactionType,
-  UserRole,
-} from '../../common/types';
+import { Language, UserRole } from '../../common/types';
 import { User, type UserDocument } from '../user/user.model';
 import { MasterProfile } from '../user/masterProfile.model';
-import { Transaction } from '../wallet/transaction.model';
 import type {
   ForgotPasswordInput,
   LoginInput,
@@ -35,7 +28,6 @@ import type {
 } from './auth.validator';
 import type { AuthResult, PhoneCheckResult, PublicUser } from './auth.types';
 
-const MASTER_SIGNUP_BONUS = 100_000;
 
 export const toPublicUser = (user: UserDocument): PublicUser => ({
   id: user.id as string,
@@ -116,25 +108,9 @@ export const register = async (input: RegisterInput): Promise<AuthResult> => {
     language: input.language ?? Language.UZ,
     acceptedRulesAt: new Date(),
     isPhoneVerified: false,
-    // Sign-up bonus so a new pro can accept their first jobs before topping up.
-    // With payments off, accepting is free and a balance would mean nothing.
-    balance: input.role === UserRole.MASTER && paymentsEnabled() ? MASTER_SIGNUP_BONUS : 0,
+    // No sign-up bonus: a pro tops up through a manual request the admin approves.
+    balance: 0,
   });
-
-  // Every so'm in a wallet has a ledger entry, the bonus included — otherwise the
-  // pro's history and the admin's totals cannot explain the balance.
-  if (user.balance > 0) {
-    await Transaction.create({
-      user: user._id,
-      type: TransactionType.ADJUSTMENT,
-      status: TransactionStatus.SUCCESS,
-      provider: PaymentProvider.BALANCE,
-      amount: user.balance,
-      balanceAfter: user.balance,
-      description: 'Sign-up bonus',
-      settledAt: new Date(),
-    });
-  }
 
   if (input.role === UserRole.MASTER) {
     await MasterProfile.create({

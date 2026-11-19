@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import mongoose from 'mongoose';
-import { env, paymentsEnabled } from '../../config/env';
+import { clickConfigured, env, paymeConfigured, paymentsEnabled } from '../../config/env';
 import { logger } from '../../config/logger';
 import {
   BadRequestError,
@@ -13,23 +13,122 @@ import {
   PaymentProvider,
   TransactionStatus,
   TransactionType,
+  type CheckoutProvider,
   type Paginated,
-  type TopUpProvider,
 } from '../../common/types';
 import { paginate } from '../../common/utils/http';
 import { User } from '../user/user.model';
 import { notify } from '../notification/notification.service';
+import { emitToUser } from '../../sockets/emitter';
+import { SocketEvent, type WalletUpdatedPayload } from '../../sockets/events';
 import { Transaction, type ITransaction, type TransactionDocument } from './transaction.model';
 
 /** Smallest top-up accepted; below this the provider's own fee outweighs the payment. */
-const MIN_TOP_UP = 1_000;
+export const MIN_TOP_UP = 1_000;
 /** Largest single top-up — a typo'd extra zero should not become a real charge. */
-const MAX_TOP_UP = 10_000_000;
+export const MAX_TOP_UP = 10_000_000;
 
-export const getBalance = async (userId: string): Promise<{ balance: number; fee: number }> => {
-  const user = await User.findById(userId).select('balance').lean();
+export type WalletSummary = {
+  balance: number;
+  fee: number;
+  /** Where the pro transfers money for a manual top-up. Empty strings when unset. */
+  manualPayment: { card: string; holder: string; note: string };
+  /** The request still waiting for an admin, if there is one. */
+  pendingTopUp: { id: string; amount: number; createdAt: Date } | null;
+};
+
+/** The filter for a manual top-up request still waiting for an admin. */
+const pendingManualFilter = (userId: string) => ({
+  user: new mongoose.Types.ObjectId(userId),
+  type: TransactionType.TOP_UP,
+  provider: PaymentProvider.MANUAL,
+  status: TransactionStatus.PENDING,
+});
+
+export const getBalance = async (userId: string): Promise<WalletSummary> => {
+  const [user, pending] = await Promise.all([
+    User.findById(userId).select('balance').lean(),
+    Transaction.findOne(pendingManualFilter(userId))
+      .select('amount createdAt')
+      .lean<Pick<ITransaction, '_id' | 'amount' | 'createdAt'>>(),
+  ]);
   if (!user) throw new NotFoundError('User');
-  return { balance: user.balance, fee: env.ORDER_ACCEPT_FEE };
+  return {
+    balance: user.balance,
+    fee: env.ORDER_ACCEPT_FEE,
+    manualPayment: {
+      card: env.MANUAL_PAYMENT_CARD,
+      holder: env.MANUAL_PAYMENT_HOLDER,
+      note: env.MANUAL_PAYMENT_NOTE,
+    },
+    pendingTopUp: pending
+      ? { id: String(pending._id), amount: pending.amount, createdAt: pending.createdAt }
+      : null,
+  };
+};
+
+/** Tells every device the user is signed in on that the wallet changed. */
+export const emitWalletUpdated = (userId: string, payload: WalletUpdatedPayload): void => {
+  emitToUser(userId, SocketEvent.WALLET_UPDATED, payload);
+};
+
+export type TopUpRequestInput = { amount: number; payerNote: string };
+
+export type TopUpRequestResult = {
+  id: string;
+  amount: number;
+  status: typeof TransactionStatus.PENDING;
+  createdAt: Date;
+};
+
+const isDuplicateKey = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && (error as { code?: number }).code === 11000;
+
+/**
+ * Files a manual top-up: the pro says they transferred `amount` to the card on
+ * `GET /wallet`, and an admin confirms it from the panel. Nothing moves until
+ * then. One open request per user — the partial unique index enforces it even
+ * when two requests race past the check below.
+ */
+export const createTopUpRequest = async (
+  userId: string,
+  input: TopUpRequestInput,
+): Promise<TopUpRequestResult> => {
+  if (!paymentsEnabled()) {
+    throw new ForbiddenError('Payments are turned off for now', 'PAYMENTS_DISABLED');
+  }
+
+  const user = await User.findById(userId).select('_id').lean();
+  if (!user) throw new NotFoundError('User');
+
+  const pendingError = (): ConflictError =>
+    new ConflictError('A top-up request is already waiting for review', 'TOP_UP_PENDING');
+
+  if (await Transaction.exists(pendingManualFilter(userId))) throw pendingError();
+
+  let transaction: TransactionDocument;
+  try {
+    transaction = await Transaction.create({
+      user: new mongoose.Types.ObjectId(userId),
+      type: TransactionType.TOP_UP,
+      status: TransactionStatus.PENDING,
+      provider: PaymentProvider.MANUAL,
+      amount: input.amount,
+      description: 'Wallet top-up (card transfer)',
+      meta: { payerNote: input.payerNote },
+    });
+  } catch (error) {
+    if (isDuplicateKey(error)) throw pendingError();
+    throw error;
+  }
+
+  logger.info('Manual top-up requested', { userId, amount: input.amount });
+  return {
+    id: String(transaction._id),
+    amount: transaction.amount,
+    status: TransactionStatus.PENDING,
+    createdAt: transaction.createdAt,
+  };
 };
 
 export const listTransactions = async (
@@ -56,7 +155,7 @@ export const listTransactions = async (
 
 export type TopUpInput = {
   amount: number;
-  provider: TopUpProvider;
+  provider: CheckoutProvider;
 };
 
 export type TopUpResult = {
@@ -95,6 +194,11 @@ export const startTopUp = async (userId: string, input: TopUpInput): Promise<Top
   // Nothing costs money while payments are off, so there is nothing to top up for.
   if (!paymentsEnabled()) {
     throw new ForbiddenError('Payments are turned off for now', 'PAYMENTS_DISABLED');
+  }
+  const configured =
+    input.provider === PaymentProvider.PAYME ? paymeConfigured() : clickConfigured();
+  if (!configured) {
+    throw new ForbiddenError('This payment provider is not available', 'PROVIDER_UNAVAILABLE');
   }
   if (input.amount < MIN_TOP_UP) {
     throw new BadRequestError(`The smallest top-up is ${MIN_TOP_UP} so'm`, [
@@ -139,6 +243,9 @@ export const verifyClickSignature = (payload: {
   signTime: string;
   signString: string;
 }): boolean => {
+  // Without a secret every digest is forgeable — refuse rather than accept.
+  if (!env.CLICK_SECRET_KEY) return false;
+
   const expected = crypto
     .createHash('md5')
     .update(
@@ -160,49 +267,6 @@ export const verifyClickSignature = (payload: {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 };
 
-/**
- * Settles a pending top-up. Providers retry callbacks, so this is idempotent:
- * an already-settled transaction returns as-is rather than crediting twice.
- */
-export const confirmTopUp = async (
-  transactionId: string,
-  externalId: string,
-): Promise<TransactionDocument> => {
-  const transaction = await Transaction.findById(transactionId);
-  if (!transaction) throw new NotFoundError('Transaction');
-
-  if (transaction.status === TransactionStatus.SUCCESS) return transaction;
-  if (transaction.status !== TransactionStatus.PENDING) {
-    throw new ConflictError('This payment can no longer be settled', 'TRANSACTION_CLOSED');
-  }
-
-  const user = await User.findByIdAndUpdate(
-    transaction.user,
-    { $inc: { balance: transaction.amount } },
-    { new: true },
-  );
-  if (!user) throw new NotFoundError('User');
-
-  transaction.status = TransactionStatus.SUCCESS;
-  transaction.externalId = externalId;
-  transaction.balanceAfter = user.balance;
-  transaction.settledAt = new Date();
-  await transaction.save();
-
-  await notify({
-    userId: transaction.user.toString(),
-    type: NotificationType.WALLET_TOPPED_UP,
-    data: { amount: String(transaction.amount), balance: String(user.balance) },
-  }).catch(() => undefined);
-
-  logger.info('Top-up settled', {
-    transactionId,
-    userId: transaction.user.toString(),
-    amount: transaction.amount,
-  });
-  return transaction;
-};
-
 export const failTopUp = async (transactionId: string, reason: string): Promise<void> => {
   await Transaction.updateOne(
     { _id: transactionId, status: TransactionStatus.PENDING },
@@ -210,24 +274,151 @@ export const failTopUp = async (transactionId: string, reason: string): Promise<
   );
 };
 
+/** Only online checkouts settle through provider callbacks; manual ones go through an admin. */
+const CHECKOUT_PROVIDERS: CheckoutProvider[] = [PaymentProvider.PAYME, PaymentProvider.CLICK];
+
+/**
+ * Settles a pending top-up. Providers retry callbacks, so this is idempotent:
+ * an already-settled transaction returns as-is rather than crediting twice.
+ * The pending -> success flip is a single conditional update, so two callbacks
+ * racing each other cannot both credit the wallet. Only `top_up` rows from an
+ * online provider qualify — a fee, refund or manual request never settles here.
+ */
+export const confirmTopUp = async (
+  transactionId: string,
+  externalId: string,
+): Promise<TransactionDocument> => {
+  if (!mongoose.isValidObjectId(transactionId)) throw new NotFoundError('Transaction');
+
+  const scope = {
+    _id: transactionId,
+    type: TransactionType.TOP_UP,
+    provider: { $in: CHECKOUT_PROVIDERS },
+  };
+
+  const claimed = await Transaction.findOneAndUpdate(
+    { ...scope, status: TransactionStatus.PENDING },
+    { $set: { status: TransactionStatus.SUCCESS, externalId, settledAt: new Date() } },
+    { new: true },
+  );
+
+  if (!claimed) {
+    const existing = await Transaction.findOne(scope);
+    if (!existing) throw new NotFoundError('Transaction');
+    if (existing.status === TransactionStatus.SUCCESS) return existing;
+    throw new ConflictError('This payment can no longer be settled', 'TRANSACTION_CLOSED');
+  }
+
+  const user = await User.findByIdAndUpdate(
+    claimed.user,
+    { $inc: { balance: claimed.amount } },
+    { new: true },
+  );
+  if (!user) throw new NotFoundError('User');
+
+  claimed.balanceAfter = user.balance;
+  await claimed.save();
+
+  await notify({
+    userId: claimed.user.toString(),
+    type: NotificationType.WALLET_TOPPED_UP,
+    data: { amount: String(claimed.amount), balance: String(user.balance) },
+  }).catch(() => undefined);
+  emitWalletUpdated(claimed.user.toString(), {
+    transactionId: String(claimed._id),
+    status: 'success',
+    balance: user.balance,
+  });
+
+  logger.info('Top-up settled', {
+    transactionId,
+    userId: claimed.user.toString(),
+    amount: claimed.amount,
+  });
+  return claimed;
+};
+
+export type ClickCallbackBody = Record<string, string | undefined>;
+export type ClickCallbackReply = Record<string, string | number | undefined>;
+
+/**
+ * Handles a Click callback whose signature the caller already verified
+ * (prepare = action 0, complete = action 1). Checks that the transaction is a
+ * real Click top-up for exactly the amount Click reports, and never credits a
+ * completion Click itself marks as failed (`error` < 0).
+ *
+ * Error codes per Click's SHOP API: -2 wrong amount, -4 already paid,
+ * -5 unknown transaction, -9 cancelled.
+ */
+export const handleClickCallback = async (body: ClickCallbackBody): Promise<ClickCallbackReply> => {
+  const merchantTransId = body.merchant_trans_id ?? '';
+  const clickTransId = body.click_trans_id ?? '';
+  const reply = (error: number, note: string): ClickCallbackReply => ({
+    error,
+    error_note: note,
+    click_trans_id: clickTransId,
+    merchant_trans_id: merchantTransId,
+  });
+
+  const transaction = mongoose.isValidObjectId(merchantTransId)
+    ? await Transaction.findOne({
+        _id: merchantTransId,
+        type: TransactionType.TOP_UP,
+        provider: PaymentProvider.CLICK,
+      })
+    : null;
+  if (!transaction) return reply(-5, 'Transaction not found');
+
+  if (Number(body.amount) !== transaction.amount) return reply(-2, 'Incorrect amount');
+  if (transaction.status === TransactionStatus.FAILED) return reply(-9, 'Transaction cancelled');
+
+  if (body.action !== '1') {
+    if (transaction.status === TransactionStatus.SUCCESS) return reply(-4, 'Already paid');
+    return reply(0, 'Success');
+  }
+
+  // Click reports its own failure on completion with a negative `error`.
+  const clickError = Number(body.error ?? 0);
+  if (Number.isNaN(clickError) || clickError < 0) {
+    if (transaction.status === TransactionStatus.PENDING) {
+      await failTopUp(String(transaction._id), `click error ${body.error ?? ''}`);
+    }
+    return reply(-9, 'Transaction cancelled');
+  }
+
+  await confirmTopUp(String(transaction._id), clickTransId);
+  return reply(0, 'Success');
+};
+
 /**
  * Refunds a job fee — used when a pro cancels a job they accepted and support
- * rules the fee back. Guarded so one job fee can only ever be refunded once.
+ * rules the fee back. One job fee can only ever be refunded once: the fee row
+ * is claimed with a single conditional update (`meta.refundedAt`), so two
+ * parallel calls cannot both pass the guard and credit the pro twice.
  */
 export const refundOrderFee = async (orderId: string): Promise<TransactionDocument | null> => {
-  const fee = await Transaction.findOne({
-    order: orderId,
-    type: TransactionType.ORDER_FEE,
-    status: TransactionStatus.SUCCESS,
-  });
-  if (!fee) return null;
+  if (!mongoose.isValidObjectId(orderId)) return null;
 
+  // Refunds recorded before the claim marker existed still count as refunded.
   const alreadyRefunded = await Transaction.exists({
     order: orderId,
     type: TransactionType.REFUND,
     status: TransactionStatus.SUCCESS,
   });
   if (alreadyRefunded) return null;
+
+  const refundedAt = new Date();
+  const fee = await Transaction.findOneAndUpdate(
+    {
+      order: orderId,
+      type: TransactionType.ORDER_FEE,
+      status: TransactionStatus.SUCCESS,
+      'meta.refundedAt': { $exists: false },
+    },
+    { $set: { 'meta.refundedAt': refundedAt } },
+    { new: true },
+  );
+  if (!fee) return null;
 
   const amount = Math.abs(fee.amount);
   const user = await User.findByIdAndUpdate(fee.user, { $inc: { balance: amount } }, { new: true });
@@ -242,7 +433,7 @@ export const refundOrderFee = async (orderId: string): Promise<TransactionDocume
     balanceAfter: user.balance,
     order: fee.order,
     description: 'Job fee refunded',
-    settledAt: new Date(),
+    settledAt: refundedAt,
   });
 
   logger.info('Job fee refunded', { orderId, amount, userId: fee.user.toString() });

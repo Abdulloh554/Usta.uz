@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
+import mongoose from 'mongoose';
 import type { Request, Response } from 'express';
 import { env } from '../../config/env';
 import { logger } from '../../config/logger';
-import { TransactionStatus } from '../../common/types';
+import { PaymentProvider, TransactionStatus, TransactionType } from '../../common/types';
 import { Transaction } from './transaction.model';
 import { confirmTopUp, failTopUp } from './wallet.service';
 
@@ -49,6 +50,14 @@ type RpcRequest = {
   };
 };
 
+/** Payme can only ever see its own top-ups — never a fee, a refund or a manual request. */
+const PAYME_TOP_UP = { type: TransactionType.TOP_UP, provider: PaymentProvider.PAYME } as const;
+
+const findPaymeTopUp = async (transactionId: string | undefined) =>
+  transactionId && mongoose.isValidObjectId(transactionId)
+    ? Transaction.findOne({ ...PAYME_TOP_UP, _id: transactionId })
+    : null;
+
 const fail = (res: Response, id: RpcRequest['id'], code: number, message: string): void => {
   res.json({ id: id ?? null, error: { code, message } });
 };
@@ -62,6 +71,9 @@ const succeed = (res: Response, id: RpcRequest['id'], result: Record<string, unk
  * Compared in constant time so the endpoint cannot be probed by timing.
  */
 const isAuthorised = (req: Request): boolean => {
+  // An unset key would match an empty password — refuse every call instead.
+  if (!env.PAYME_KEY) return false;
+
   const header = req.headers.authorization;
   if (!header?.startsWith('Basic ')) return false;
 
@@ -90,7 +102,7 @@ export const paymeCallback = async (req: Request, res: Response): Promise<void> 
 
   switch (method) {
     case 'CheckPerformTransaction': {
-      const transaction = await Transaction.findById(params?.account?.transaction_id);
+      const transaction = await findPaymeTopUp(params?.account?.transaction_id);
       if (!transaction) {
         fail(res, id, ERROR.ACCOUNT_NOT_FOUND, 'Transaction not found');
         return;
@@ -105,7 +117,7 @@ export const paymeCallback = async (req: Request, res: Response): Promise<void> 
     }
 
     case 'CreateTransaction': {
-      const transaction = await Transaction.findById(params?.account?.transaction_id);
+      const transaction = await findPaymeTopUp(params?.account?.transaction_id);
       if (!transaction) {
         fail(res, id, ERROR.ACCOUNT_NOT_FOUND, 'Transaction not found');
         return;
@@ -130,7 +142,7 @@ export const paymeCallback = async (req: Request, res: Response): Promise<void> 
     }
 
     case 'PerformTransaction': {
-      const transaction = await Transaction.findOne({ externalId: params?.id });
+      const transaction = await Transaction.findOne({ ...PAYME_TOP_UP, externalId: params?.id });
       if (!transaction) {
         fail(res, id, ERROR.TRANSACTION_NOT_FOUND, 'Transaction not found');
         return;
@@ -148,7 +160,7 @@ export const paymeCallback = async (req: Request, res: Response): Promise<void> 
     }
 
     case 'CancelTransaction': {
-      const transaction = await Transaction.findOne({ externalId: params?.id });
+      const transaction = await Transaction.findOne({ ...PAYME_TOP_UP, externalId: params?.id });
       if (!transaction) {
         fail(res, id, ERROR.TRANSACTION_NOT_FOUND, 'Transaction not found');
         return;
@@ -171,7 +183,7 @@ export const paymeCallback = async (req: Request, res: Response): Promise<void> 
     }
 
     case 'CheckTransaction': {
-      const transaction = await Transaction.findOne({ externalId: params?.id });
+      const transaction = await Transaction.findOne({ ...PAYME_TOP_UP, externalId: params?.id });
       if (!transaction) {
         fail(res, id, ERROR.TRANSACTION_NOT_FOUND, 'Transaction not found');
         return;

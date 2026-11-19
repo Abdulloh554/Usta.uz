@@ -1,7 +1,14 @@
 import { Router } from 'express';
 import { validate } from '../../common/middlewares/validate.middleware';
 import { authenticate } from '../../common/middlewares/auth.middleware';
-import { authLimiter, smsLimiter } from '../../common/middlewares/rateLimit.middleware';
+import {
+  authLimiter,
+  checkPhoneLimiter,
+  forgotPasswordPhoneLimiter,
+  loginIpLimiter,
+  loginPhoneLimiter,
+  smsLimiter,
+} from '../../common/middlewares/rateLimit.middleware';
 import * as controller from './auth.controller';
 import {
   checkPhoneSchema,
@@ -14,10 +21,21 @@ import {
 
 export const authRouter = Router();
 
-authRouter.post('/check-phone', validate({ body: checkPhoneSchema }), controller.checkPhone);
+authRouter.post(
+  '/check-phone',
+  checkPhoneLimiter,
+  validate({ body: checkPhoneSchema }),
+  controller.checkPhone,
+);
 
 authRouter.post('/register', authLimiter, validate({ body: registerSchema }), controller.register);
-authRouter.post('/login', authLimiter, validate({ body: loginSchema }), controller.login);
+authRouter.post(
+  '/login',
+  loginIpLimiter,
+  loginPhoneLimiter,
+  validate({ body: loginSchema }),
+  controller.login,
+);
 
 // The refresh body is optional — the cookie carries it on web — so the schema is
 // applied only when a body is actually present.
@@ -39,6 +57,7 @@ authRouter.post('/logout-all', authenticate, controller.logoutEverywhere);
 authRouter.post(
   '/forgot-password',
   smsLimiter,
+  forgotPasswordPhoneLimiter,
   validate({ body: forgotPasswordSchema }),
   controller.forgotPassword,
 );

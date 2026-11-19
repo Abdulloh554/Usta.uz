@@ -84,4 +84,23 @@ transactionSchema.index(
   },
 );
 
+/**
+ * One open manual top-up request per user. The service checks first for a
+ * friendly 409; this index is what holds when two requests race.
+ */
+transactionSchema.index(
+  { user: 1 },
+  {
+    name: 'one_pending_manual_top_up',
+    unique: true,
+    partialFilterExpression: {
+      type: TransactionType.TOP_UP,
+      provider: PaymentProvider.MANUAL,
+      status: TransactionStatus.PENDING,
+    },
+  },
+);
+/** The admin "To'lovlar" queue: manual top-ups by status, newest first. */
+transactionSchema.index({ provider: 1, type: 1, status: 1, createdAt: -1 });
+
 export const Transaction = model<ITransaction, TransactionModel>('Transaction', transactionSchema);

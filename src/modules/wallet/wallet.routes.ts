@@ -2,13 +2,16 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate, authorize } from '../../common/middlewares/auth.middleware';
 import { paginationSchema, validate } from '../../common/middlewares/validate.middleware';
-import { webhookLimiter } from '../../common/middlewares/rateLimit.middleware';
-import { asyncHandler, ok } from '../../common/utils/http';
+import {
+  topUpRequestLimiter,
+  webhookLimiter,
+} from '../../common/middlewares/rateLimit.middleware';
+import { asyncHandler, created, ok } from '../../common/utils/http';
 import {
   PaymentProvider,
   UserRole,
   type AuthenticatedRequest,
-  type TopUpProvider,
+  type CheckoutProvider,
 } from '../../common/types';
 import { logger } from '../../config/logger';
 import * as walletService from './wallet.service';
@@ -17,6 +20,16 @@ import { paymeCallback } from './payme.controller';
 const topUpSchema = z.object({
   amount: z.coerce.number().int().positive(),
   provider: z.enum([PaymentProvider.PAYME, PaymentProvider.CLICK]),
+});
+
+/** A manual top-up request: what the pro says they transferred, and from where. */
+const topUpRequestSchema = z.object({
+  amount: z.coerce
+    .number()
+    .int()
+    .min(walletService.MIN_TOP_UP)
+    .max(walletService.MAX_TOP_UP),
+  payerNote: z.string().trim().min(3).max(200),
 });
 
 export const walletRouter = Router();
@@ -47,9 +60,24 @@ walletRouter.post(
   asyncHandler<AuthenticatedRequest>(async (req, res) => {
     const result = await walletService.startTopUp(
       req.user.id,
-      req.body as { amount: number; provider: TopUpProvider },
+      req.body as { amount: number; provider: CheckoutProvider },
     );
     ok(res, result);
+  }),
+);
+
+walletRouter.post(
+  '/top-up-requests',
+  authenticate,
+  authorize(UserRole.MASTER, UserRole.SELLER),
+  topUpRequestLimiter,
+  validate({ body: topUpRequestSchema }),
+  asyncHandler<AuthenticatedRequest>(async (req, res) => {
+    const result = await walletService.createTopUpRequest(
+      req.user.id,
+      req.body as walletService.TopUpRequestInput,
+    );
+    created(res, result);
   }),
 );
 
@@ -83,16 +111,7 @@ walletRouter.post(
     }
 
     // action 0 = prepare (reserve), action 1 = complete (settle).
-    if (body.action === '1') {
-      await walletService.confirmTopUp(body.merchant_trans_id ?? '', body.click_trans_id ?? '');
-    }
-
-    res.json({
-      error: 0,
-      error_note: 'Success',
-      click_trans_id: body.click_trans_id,
-      merchant_trans_id: body.merchant_trans_id,
-    });
+    res.json(await walletService.handleClickCallback(body));
   }),
 );
 

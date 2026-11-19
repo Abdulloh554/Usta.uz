@@ -286,15 +286,11 @@ describe('regressions found in role QA', () => {
       crafts: ['electrician'],
     };
 
-    it('records the pro’s sign-up bonus in the ledger', async () => {
+    it('gives a new pro no sign-up bonus', async () => {
       const response = await request(app).post(`${PREFIX}/auth/register`).send(proPayload);
       expect(response.status).toBe(201);
-
-      const entries = await Transaction.find({ user: response.body.data.user.id });
-      expect(entries).toHaveLength(1);
-      expect(entries[0]!.type).toBe(TransactionType.ADJUSTMENT);
-      expect(entries[0]!.amount).toBe(response.body.data.user.balance);
-      expect(entries[0]!.balanceAfter).toBe(response.body.data.user.balance);
+      expect(response.body.data.user.balance).toBe(0);
+      expect(await Transaction.countDocuments({ user: response.body.data.user.id })).toBe(0);
     });
 
     it('rejects the same trade picked twice', async () => {
@@ -306,13 +302,41 @@ describe('regressions found in role QA', () => {
   });
 
   describe('wallet', () => {
-    it('caps a single top-up', async () => {
+    it('caps a single manual top-up request', async () => {
+      const master = await makeMaster();
+      const response = await request(app)
+        .post(`${PREFIX}/wallet/top-up-requests`)
+        .set('Authorization', bearer(master.id as string, UserRole.MASTER))
+        .send({ amount: 50_000_000, payerNote: 'Karta oxiri 1234' });
+      expect(response.status).toBe(422);
+    });
+
+    it('caps a single checkout top-up once the provider is configured', async () => {
+      const settings = env as unknown as Record<string, string>;
+      const saved = { id: settings.PAYME_MERCHANT_ID, key: settings.PAYME_KEY };
+      settings.PAYME_MERCHANT_ID = 'test-merchant';
+      settings.PAYME_KEY = 'test-payme-key';
+      try {
+        const master = await makeMaster();
+        const response = await request(app)
+          .post(`${PREFIX}/wallet/top-up`)
+          .set('Authorization', bearer(master.id as string, UserRole.MASTER))
+          .send({ amount: 50_000_000, provider: PaymentProvider.PAYME });
+        expect(response.status).toBe(400);
+      } finally {
+        settings.PAYME_MERCHANT_ID = saved.id as string;
+        settings.PAYME_KEY = saved.key as string;
+      }
+    });
+
+    it('refuses a checkout top-up while the provider has no keys', async () => {
       const master = await makeMaster();
       const response = await request(app)
         .post(`${PREFIX}/wallet/top-up`)
         .set('Authorization', bearer(master.id as string, UserRole.MASTER))
-        .send({ amount: 50_000_000, provider: PaymentProvider.PAYME });
-      expect(response.status).toBe(400);
+        .send({ amount: 50_000, provider: PaymentProvider.PAYME });
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe('PROVIDER_UNAVAILABLE');
     });
   });
 

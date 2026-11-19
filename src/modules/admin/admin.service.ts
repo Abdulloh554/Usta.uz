@@ -46,6 +46,7 @@ import type {
   ListReviewsInput,
   ListTransactionsInput,
   ListUsersInput,
+  ResetPasswordInput,
   UpdateUserStatusInput,
 } from './admin.validator';
 
@@ -287,6 +288,32 @@ export const revokeSessions = async (adminId: string, userId: string): Promise<v
     AdminTarget.USER,
     userId,
     `${user.fullName()} barcha qurilmalardan chiqarildi`,
+  );
+};
+
+/**
+ * Support-led password reset (there is no SMS in the MVP): the admin sets a new
+ * password and every existing session of that user is revoked. The same guard
+ * as blocking applies — no admin resets their own or another admin's password.
+ */
+export const resetPassword = async (
+  adminId: string,
+  userId: string,
+  input: ResetPasswordInput,
+): Promise<void> => {
+  const user = await loadManageableUser(adminId, userId);
+  // The model's pre-save hook hashes whatever lands in `passwordHash`.
+  user.passwordHash = input.password;
+  await user.save();
+
+  await logoutEverywhere(userId);
+  disconnectUser(userId);
+  await record(
+    adminId,
+    AdminAction.USER_PASSWORD_RESET,
+    AdminTarget.USER,
+    userId,
+    `${user.fullName()} uchun yangi parol o'rnatildi`,
   );
 };
 

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { objectIdSchema, paginationSchema } from '../../common/middlewares/validate.middleware';
+import { httpsUrl } from '../../common/utils/url';
 import { MessageKind } from './chat.model';
 
 export const chatIdParamSchema = z.object({ id: objectIdSchema });
@@ -12,7 +13,7 @@ export const sendMessageSchema = z
   .object({
     text: z.string().trim().max(4000).optional(),
     kind: z.nativeEnum(MessageKind).default(MessageKind.TEXT),
-    attachmentUrl: z.string().url().optional(),
+    attachmentUrl: httpsUrl().optional(),
   })
   .superRefine((value, ctx) => {
     if (value.kind === MessageKind.TEXT && !value.text?.trim()) {

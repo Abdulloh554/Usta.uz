@@ -11,6 +11,7 @@ import {
   validate,
 } from '../../common/middlewares/validate.middleware';
 import { asyncHandler, created, noContent, ok } from '../../common/utils/http';
+import { httpsUrl } from '../../common/utils/url';
 import { UserRole, type AuthenticatedRequest } from '../../common/types';
 import * as productService from './product.service';
 import * as purchases from './purchase.service';
@@ -28,10 +29,7 @@ const wholeNumber = (max: number) =>
   );
 
 /** `z.string().url()` also passes `javascript:` links, which must never reach an `<img>`. */
-const webUrl = z
-  .string()
-  .url()
-  .refine((url) => /^https?:\/\//i.test(url), 'Must be an http(s) link');
+const webUrl = httpsUrl();
 
 const productBodySchema = z.object({
   title: z.string().trim().min(2).max(140),

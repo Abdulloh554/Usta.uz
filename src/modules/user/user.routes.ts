@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { authenticate, authorize } from '../../common/middlewares/auth.middleware';
 import { idParamSchema, validate } from '../../common/middlewares/validate.middleware';
 import { asyncHandler, ok } from '../../common/utils/http';
+import { httpsUrl } from '../../common/utils/url';
 import { Craft, Language, UserRole, type AuthenticatedRequest } from '../../common/types';
 import * as userService from './user.service';
 
@@ -11,11 +12,7 @@ const updateProfileSchema = z.object({
   lastName: z.string().trim().min(2).max(50).optional(),
   language: z.nativeEnum(Language).optional(),
   // `.url()` alone also passes `javascript:` links.
-  avatarUrl: z
-    .string()
-    .url()
-    .refine((url) => /^https?:\/\//i.test(url), 'Must be an http(s) link')
-    .optional(),
+  avatarUrl: httpsUrl().optional(),
 });
 
 const updateMasterSchema = z.object({

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { OrderCategory, OrderStatus } from '../../common/types';
 import { objectIdSchema, paginationSchema } from '../../common/middlewares/validate.middleware';
+import { httpsUrl } from '../../common/utils/url';
 
 const coordinates = z
   .tuple([z.number().min(-180).max(180), z.number().min(-90).max(90)])
@@ -14,7 +15,7 @@ export const createOrderSchema = z.object({
   landmark: z.string().trim().max(300).optional(),
   region: z.string().trim().max(60).optional(),
   location: coordinates.optional(),
-  photos: z.array(z.string().url()).max(6).default([]),
+  photos: z.array(httpsUrl()).max(6).default([]),
 });
 
 export const listOrdersSchema = paginationSchema.extend({

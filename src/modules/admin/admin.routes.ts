@@ -5,6 +5,7 @@ import { asyncHandler, noContent, ok } from '../../common/utils/http';
 import { UserRole, type AuthenticatedRequest } from '../../common/types';
 import * as adminService from './admin.service';
 import * as statsService from './stats.service';
+import * as paymentsService from './payments.service';
 import { getBroadcast } from './broadcast.service';
 import {
   assistantSchema,
@@ -17,6 +18,10 @@ import { trafficQuerySchema, trafficReport, type TrafficQuery } from '../traffic
 import {
   adjustBalanceSchema,
   adminCancelOrderSchema,
+  approvePaymentSchema,
+  listPaymentsSchema,
+  rejectPaymentSchema,
+  resetPasswordSchema,
   broadcastSchema,
   listChatsSchema,
   listLogsSchema,
@@ -41,6 +46,10 @@ import {
   type ListReviewsInput,
   type ListTransactionsInput,
   type ListUsersInput,
+  type ApprovePaymentInput,
+  type ListPaymentsInput,
+  type RejectPaymentInput,
+  type ResetPasswordInput,
   type UpdateUserStatusInput,
 } from './admin.validator';
 
@@ -146,6 +155,15 @@ adminRouter.post(
   asyncHandler<AdminRequest>(async (req, res) => {
     await adminService.revokeSessions(req.user.id, id(req));
     ok(res, { revoked: true });
+  }),
+);
+
+adminRouter.post(
+  '/users/:id/password',
+  validate({ params: idParamSchema, body: resetPasswordSchema }),
+  asyncHandler<AdminRequest>(async (req, res) => {
+    await adminService.resetPassword(req.user.id, id(req), req.body as ResetPasswordInput);
+    ok(res, { reset: true });
   }),
 );
 
@@ -263,6 +281,44 @@ adminRouter.get(
   validate({ query: listTransactionsSchema }),
   asyncHandler(async (req, res) => {
     ok(res, await adminService.listTransactions(req.query as unknown as ListTransactionsInput));
+  }),
+);
+
+/* — manual top-ups ("To'lovlar") — */
+adminRouter.get(
+  '/payments',
+  validate({ query: listPaymentsSchema }),
+  asyncHandler(async (req, res) => {
+    ok(res, await paymentsService.listPayments(req.query as unknown as ListPaymentsInput));
+  }),
+);
+
+adminRouter.get(
+  '/payments/pending-count',
+  asyncHandler(async (_req, res) => {
+    ok(res, await paymentsService.pendingCount());
+  }),
+);
+
+adminRouter.post(
+  '/payments/:id/approve',
+  validate({ params: idParamSchema, body: approvePaymentSchema }),
+  asyncHandler<AdminRequest>(async (req, res) => {
+    ok(
+      res,
+      await paymentsService.approvePayment(req.user.id, id(req), req.body as ApprovePaymentInput),
+    );
+  }),
+);
+
+adminRouter.post(
+  '/payments/:id/reject',
+  validate({ params: idParamSchema, body: rejectPaymentSchema }),
+  asyncHandler<AdminRequest>(async (req, res) => {
+    ok(
+      res,
+      await paymentsService.rejectPayment(req.user.id, id(req), req.body as RejectPaymentInput),
+    );
   }),
 );
 

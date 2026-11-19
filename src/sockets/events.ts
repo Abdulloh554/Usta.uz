@@ -37,6 +37,10 @@ export const SocketEvent = {
 
   /* — notifications — */
   NOTIFICATION: 'notification',
+
+  /* — wallet — */
+  /** A top-up settled or was rejected: `{ transactionId, status, balance }`. */
+  WALLET_UPDATED: 'wallet:updated',
 } as const;
 export type SocketEvent = (typeof SocketEvent)[keyof typeof SocketEvent];
 
@@ -89,6 +93,12 @@ export type TypingPayload = {
   chatId: string;
   userId: string;
   isTyping: boolean;
+};
+
+export type WalletUpdatedPayload = {
+  transactionId: string;
+  status: 'success' | 'failed';
+  balance: number;
 };
 
 /** Room naming. A user room reaches every device that user is signed in on. */

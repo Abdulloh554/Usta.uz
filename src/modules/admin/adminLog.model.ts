@@ -19,6 +19,13 @@ export const AdminAction = {
   REVIEW_HIDDEN: 'review.hidden',
   REVIEW_RESTORED: 'review.restored',
   BROADCAST_SENT: 'broadcast.sent',
+  /*
+   * The manual-payments contract names these three in snake_case, and the admin
+   * panel filters the journal by exactly these strings.
+   */
+  PAYMENT_APPROVED: 'payment_approved',
+  PAYMENT_REJECTED: 'payment_rejected',
+  USER_PASSWORD_RESET: 'user_password_reset',
 } as const;
 export type AdminAction = (typeof AdminAction)[keyof typeof AdminAction];
 
@@ -30,6 +37,7 @@ export const AdminTarget = {
   PRODUCT: 'product',
   REVIEW: 'review',
   BROADCAST: 'broadcast',
+  TRANSACTION: 'transaction',
 } as const;
 export type AdminTarget = (typeof AdminTarget)[keyof typeof AdminTarget];
 

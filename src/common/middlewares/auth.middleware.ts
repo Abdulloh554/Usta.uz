@@ -73,13 +73,20 @@ export const optionalAuthenticate: RequestHandler = (req, _res, next) => {
     next();
     return;
   }
+  let payload: JwtPayload;
   try {
-    const payload = verifyAccessToken(token);
-    req.user = { id: payload.sub, role: payload.role };
+    payload = verifyAccessToken(token);
   } catch {
     // An invalid token on an optional route is treated as no token at all.
+    next();
+    return;
   }
-  next();
+  // A revoked session (blocked account, "sign out everywhere") is treated the
+  // same way: the request carries on anonymously rather than as that user.
+  void isRevoked(payload).then((revoked) => {
+    if (!revoked) req.user = { id: payload.sub, role: payload.role };
+    next();
+  });
 };
 
 /** Must be mounted after `authenticate`. */

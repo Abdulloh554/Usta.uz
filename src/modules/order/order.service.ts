@@ -188,9 +188,14 @@ export const getOrderForUser = async (orderId: string, userId: string): Promise<
     throw new ForbiddenError('This job is not yours', 'ORDER_FORBIDDEN');
   }
 
-  // The full job address is revealed only to its owner and the assigned master.
+  // The full job address — and the client's phone number, which is exactly what
+  // the accept fee buys — is revealed only to its owner and the assigned master.
+  // A pro who was merely offered the job sees neither until they accept.
   if (clientId !== userId && masterId !== userId) {
     order.set({ address: undefined, landmark: undefined, location: undefined });
+    if (order.populated('client')) {
+      (order.client as unknown as mongoose.Document).set('phone', undefined);
+    }
   }
 
   return order;

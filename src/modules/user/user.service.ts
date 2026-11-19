@@ -3,7 +3,7 @@ import { keys, redis } from '../../config/redis';
 import { env } from '../../config/env';
 import { logger } from '../../config/logger';
 import { ConflictError, NotFoundError, UnauthorizedError } from '../../common/errors/ApiError';
-import type { Craft, Language} from '../../common/types';
+import type { Craft, Language } from '../../common/types';
 import { OrderStatus, UserRole } from '../../common/types';
 import { Order } from '../order/order.model';
 import { Chat } from '../chat/chat.model';
@@ -22,7 +22,10 @@ export type UpdateProfileInput = {
   avatarUrl?: string;
 };
 
-export const updateProfile = async (userId: string, input: UpdateProfileInput): Promise<PublicUser> => {
+export const updateProfile = async (
+  userId: string,
+  input: UpdateProfileInput,
+): Promise<PublicUser> => {
   const user = await User.findById(userId);
   if (!user) throw new NotFoundError('User');
 
@@ -91,9 +94,7 @@ const touchLastSeen = async (userId: string, force: boolean): Promise<void> => {
 export const setOnline = async (userId: string, online: boolean): Promise<void> => {
   const [profile] = await Promise.all([
     MasterProfile.updateOne({ user: userId }, { $set: { isOnline: online } }),
-    online
-      ? redis.sadd(keys.onlineMasters, userId)
-      : redis.srem(keys.onlineMasters, userId),
+    online ? redis.sadd(keys.onlineMasters, userId) : redis.srem(keys.onlineMasters, userId),
     touchLastSeen(userId, !online),
   ]);
 
@@ -148,9 +149,26 @@ type PublicMaster = Pick<
   'id' | 'firstName' | 'lastName' | 'fullName' | 'initials' | 'role' | 'avatarUrl' | 'createdAt'
 >;
 
+/**
+ * The pro's profile fields that are safe to publish. Location, presence
+ * (`isOnline`, `lastOfferAt`) and the cancellation count stay private: the
+ * first two let anyone track a pro's movements and working hours.
+ */
+const PUBLIC_PROFILE_FIELDS = [
+  'crafts',
+  'about',
+  'regions',
+  'rating',
+  'ratingCount',
+  'completedJobs',
+  'createdAt',
+] as const satisfies readonly (keyof IMasterProfile)[];
+
+type PublicMasterProfileFields = Pick<IMasterProfile, (typeof PUBLIC_PROFILE_FIELDS)[number]>;
+
 export type MasterPublicProfile = {
   user: PublicMaster;
-  profile: IMasterProfile;
+  profile: PublicMasterProfileFields;
   stats: {
     rating: number;
     completedJobs: number;
@@ -162,7 +180,11 @@ export const getMasterProfile = async (masterId: string): Promise<MasterPublicPr
   const user = await User.findById(masterId);
   if (!user || user.role !== UserRole.MASTER) throw new NotFoundError('Master');
 
-  const profile = await MasterProfile.findOne({ user: masterId }).lean();
+  // Projected at the query, so a field added to the model later stays private
+  // until someone deliberately publishes it.
+  const profile = await MasterProfile.findOne({ user: masterId })
+    .select([...PUBLIC_PROFILE_FIELDS, '-_id'].join(' '))
+    .lean<PublicMasterProfileFields>();
   if (!profile) throw new NotFoundError('Master profile');
 
   const account = toPublicUser(user);
@@ -187,7 +209,10 @@ export const getMasterProfile = async (masterId: string): Promise<MasterPublicPr
 };
 
 /** The "top-rated pros" list on the client's home screen. */
-export const topMasters = async (limit = 5, craft?: Craft): Promise<
+export const topMasters = async (
+  limit = 5,
+  craft?: Craft,
+): Promise<
   Array<{
     id: string;
     name: string;

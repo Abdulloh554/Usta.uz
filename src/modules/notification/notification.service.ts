@@ -50,6 +50,11 @@ const COPY: Record<NotificationType, Record<Language, { title: string; body: str
     ru: { title: 'Баланс пополнен', body: 'Ваш счёт пополнен.' },
     en: { title: 'Wallet topped up', body: 'Your balance has been credited.' },
   },
+  [NotificationType.WALLET_TOP_UP_REJECTED]: {
+    uz: { title: 'To‘ldirish so‘rovi rad etildi', body: 'Hisobni to‘ldirish so‘rovingiz rad etildi.' },
+    ru: { title: 'Запрос на пополнение отклонён', body: 'Ваш запрос на пополнение счёта отклонён.' },
+    en: { title: 'Top-up request rejected', body: 'Your wallet top-up request was rejected.' },
+  },
   // Broadcasts always carry their own title and body; this is only the fallback.
   [NotificationType.ANNOUNCEMENT]: {
     uz: { title: 'Ustamiz', body: 'Jamoamizdan yangi xabar.' },

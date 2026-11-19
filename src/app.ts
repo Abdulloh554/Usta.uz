@@ -7,7 +7,7 @@ import morgan from 'morgan';
 import mongoSanitize from 'express-mongo-sanitize';
 import mongoose from 'mongoose';
 import { env, isProduction, isTest } from './config/env';
-import { httpLogStream } from './config/logger';
+import { httpLogStream, logger } from './config/logger';
 import { isShuttingDown } from './config/lifecycle';
 import { redis } from './config/redis';
 import { apiRouter } from './routes';
@@ -23,6 +23,16 @@ export const createApp = (): Express => {
   app.disable('x-powered-by');
 
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+  // An empty list allows every browser origin. That is not blocked — the native
+  // app sends no Origin header and works either way — but in production the
+  // web, admin and landing domains should be listed so a hostile page cannot
+  // make credentialed calls with a visitor's cookie.
+  if (isProduction && env.CORS_ORIGINS.length === 0) {
+    logger.warn(
+      'CORS_ORIGINS is empty in production — every browser origin is allowed. ' +
+        'Set it to the web, admin and landing domains.',
+    );
+  }
   app.use(
     cors({
       origin: (origin, callback) => {

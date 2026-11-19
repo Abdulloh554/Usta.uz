@@ -121,7 +121,11 @@ export const initSocketServer = (httpServer: HttpServer): Server => {
     });
 
     socket.on(SocketEvent.CHAT_TYPING, (payload: Partial<TypingPayload>) => {
-      if (!payload?.chatId) return;
+      if (typeof payload?.chatId !== 'string' || !payload.chatId) return;
+      // Only a socket that passed the CHAT_JOIN membership check is in the
+      // room. Checking that — rather than querying the chat on every keystroke —
+      // stops an outsider broadcasting typing events into someone else's chat.
+      if (!socket.rooms.has(room.chat(payload.chatId))) return;
       socket.to(room.chat(payload.chatId)).emit(SocketEvent.CHAT_TYPING_STATE, {
         chatId: payload.chatId,
         userId: user.id,
