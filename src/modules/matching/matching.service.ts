@@ -38,10 +38,10 @@ const OFFER_TIMEOUT = env.MATCH_OFFER_TIMEOUT_SECONDS;
  * Ranks the pros who could take this job.
  *
  * Filters: trade matches the job category, the pro is available and either
- * connected or seen within `MATCH_OFFLINE_GRACE_MINUTES`, and
- * their balance covers the acceptance fee — the design tells pros a job is only
- * offered when they can actually pay for it. Sorted by rating descending, so the
- * best-rated pro sees it first.
+ * connected or seen within `MATCH_OFFLINE_GRACE_MINUTES`. The balance is not a
+ * filter: every pro is offered the job, and the fee is checked only when they
+ * accept — an under-funded pro is then sent to top up. Sorted by rating
+ * descending, so the best-rated pro sees it first.
  *
  * When the job carries coordinates the ranking runs as a `$geoNear` pipeline and
  * candidates outside `MATCH_RADIUS_KM` are dropped; without coordinates it falls
@@ -49,8 +49,6 @@ const OFFER_TIMEOUT = env.MATCH_OFFER_TIMEOUT_SECONDS;
  */
 export const buildCandidates = async (order: OrderDocument): Promise<MatchCandidate[]> => {
   const crafts = CATEGORY_CRAFTS[order.category];
-  const fee = env.ORDER_ACCEPT_FEE;
-
   // Online state is checked after the lookup, so a pro who closed the app a few
   // minutes ago is still reachable — by push, which is the point of having it.
   const baseMatch: Record<string, unknown> = {
@@ -78,7 +76,7 @@ export const buildCandidates = async (order: OrderDocument): Promise<MatchCandid
     : [{ $match: order.region ? { ...baseMatch, regions: order.region } : baseMatch }];
 
   pipeline.push(
-    // Join the wallet in, so an under-funded pro never reaches the queue.
+    // Join the account in, to drop blocked or inactive pros.
     {
       $lookup: {
         from: User.collection.name,
@@ -87,12 +85,11 @@ export const buildCandidates = async (order: OrderDocument): Promise<MatchCandid
         as: 'account',
         pipeline: [
           { $match: { isActive: true, isBlocked: false, role: UserRole.MASTER } },
-          { $project: { balance: 1, lastSeenAt: 1 } },
+          { $project: { lastSeenAt: 1 } },
         ],
       },
     },
     { $unwind: '$account' },
-    { $match: { 'account.balance': { $gte: fee } } },
     // Connected right now, or seen within the grace window — `setOnline` writes
     // `lastSeenAt` on disconnect, so this is "closed the app recently".
     { $match: { $or: [{ isOnline: true }, { 'account.lastSeenAt': { $gte: seenSince } }] } },

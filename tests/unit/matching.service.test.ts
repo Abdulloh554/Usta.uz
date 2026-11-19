@@ -37,16 +37,15 @@ describe('matching service', () => {
       ]);
     });
 
-    it('leaves out a pro whose balance cannot cover the fee', async () => {
+    it('offers the job to a pro whose balance cannot cover the fee', async () => {
       const client = await makeClient();
-      await makeMaster({ balance: FEE - 1 });
+      const broke = await makeMaster({ balance: 0 });
       const funded = await makeMaster({ balance: FEE });
       const order = await makeOrder(client._id);
 
       const candidates = await buildCandidates(order);
 
-      expect(candidates).toHaveLength(1);
-      expect(candidates[0]!.masterId).toBe(funded.id);
+      expect(candidates.map((c) => c.masterId).sort()).toEqual([broke.id, funded.id].sort());
     });
 
     it('leaves out offline and unavailable pros', async () => {
