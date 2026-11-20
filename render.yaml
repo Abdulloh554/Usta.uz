@@ -83,13 +83,8 @@ services:
       # The per-job fee a pro pays on accept; 0 turns payments off.
       - key: ORDER_ACCEPT_FEE
         value: '4999'
-      # Manual top-ups (MVP): the card pros transfer to, set in the dashboard.
-      - key: MANUAL_PAYMENT_CARD
-        sync: false
-      - key: MANUAL_PAYMENT_HOLDER
-        sync: false
-      - key: MANUAL_PAYMENT_NOTE
-        sync: false
+      # Manual top-ups: MANUAL_PAYMENT_CARD / _HOLDER / _NOTE are added in the
+      # dashboard (Environment) once the card exists; they default to empty.
 
   # ─── Redis ───────────────────────────────────────────────────────────────
   - name: ustauz-keyvalue
