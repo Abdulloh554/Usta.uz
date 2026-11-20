@@ -98,7 +98,9 @@ const schema = z.object({
    * Email is the channel for verification codes (SMS needs a registered company
    * with Eskiz). `console` logs the code instead of sending it — the dev/test default.
    */
-  MAIL_PROVIDER: z.enum(['smtp', 'console']).default('console'),
+  MAIL_PROVIDER: z.enum(['brevo', 'smtp', 'console']).default('console'),
+  /** HTTPS email API (Brevo): hosts such as Render's free tier block outbound SMTP ports. */
+  BREVO_API_KEY: z.string().default(''),
   SMTP_HOST: z.string().default('smtp.gmail.com'),
   SMTP_PORT: z.coerce.number().int().positive().default(465),
   SMTP_USER: z.string().default(''),

@@ -153,6 +153,13 @@ password-reset code - goes out by email. `MAIL_PROVIDER=smtp` sends through
 password. `MAIL_FROM` is optional (`"Ustamiz" <you@gmail.com>`); it falls back to
 `SMTP_USER`. With `MAIL_PROVIDER=console` the code is logged instead of sent.
 
+**Render's free tier blocks outbound SMTP ports**, so Gmail SMTP cannot send from
+there (the request would hang). Use Brevo's HTTPS API instead: create a free
+Brevo account, verify the sender address, make an API key, then set
+`MAIL_PROVIDER=brevo`, `BREVO_API_KEY=<key>` and `MAIL_FROM` (the verified
+sender) in the service's Environment. Gmail SMTP still works locally and on any
+host that leaves the ports open.
+
 SMS is switched off (`SMS_PROVIDER=console`): Eskiz only serves registered
 companies. The Eskiz and Play Mobile providers stay in the code for when that
 changes.
