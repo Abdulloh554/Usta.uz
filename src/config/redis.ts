@@ -57,6 +57,9 @@ export const disconnectRedis = async (): Promise<void> => {
 export const keys = {
   smsCode: (phone: string): string => `sms:code:${phone}`,
   smsAttempts: (phone: string): string => `sms:attempts:${phone}`,
+  /** Password-reset code sent by email; `email` is already lower-cased. */
+  emailCode: (email: string): string => `email:code:${email}`,
+  emailAttempts: (email: string): string => `email:attempts:${email}`,
   refreshToken: (userId: string, tokenId: string): string => `auth:refresh:${userId}:${tokenId}`,
   refreshTokensOfUser: (userId: string): string => `auth:refresh:${userId}:*`,
   /** Unix seconds; access tokens this user was issued before it are refused. */

@@ -8,6 +8,7 @@ import { env, isTest } from '../../config/env';
 import { verifyAccessToken } from '../utils/token';
 import { TooManyRequestsError } from '../errors/ApiError';
 import { normalizePhone } from '../utils/phone';
+import { normalizeEmail } from '../utils/email';
 
 /**
  * Rate limit state lives in Redis so the window holds across API instances —
@@ -100,6 +101,20 @@ export const phoneKeyFor = (req: Request): string => {
   return keyFor(req);
 };
 
+/**
+ * Counts against the account named in the body - the email, or the phone for
+ * accounts that still sign in with one - so credential stuffing against one
+ * account is capped however many addresses it is spread over. Anything else
+ * falls back to the caller's key; validation rejects that request anyway.
+ */
+export const identityKeyFor = (req: Request): string => {
+  const body = req.body as { email?: unknown } | undefined;
+  if (typeof body?.email === 'string' && body.email.trim() !== '') {
+    return `email:${normalizeEmail(body.email)}`;
+  }
+  return phoneKeyFor(req);
+};
+
 type BuildOptions = Pick<Partial<Options>, 'keyGenerator' | 'skipSuccessfulRequests'>;
 
 const build = (
@@ -153,13 +168,13 @@ export const loginIpLimiter = build(
   'Too many sign-in attempts, try again in 15 minutes',
 );
 
-/** Failed logins per account (normalised phone). Successful sign-ins do not count. */
-export const loginPhoneLimiter = build(
-  'login-phone',
+/** Failed logins per account (normalised email). Successful sign-ins do not count. */
+export const loginAccountLimiter = build(
+  'login-account',
   15 * 60_000,
   10,
-  'Too many failed sign-in attempts for this number, try again in 15 minutes',
-  { keyGenerator: phoneKeyFor, skipSuccessfulRequests: true },
+  'Too many failed sign-in attempts for this account, try again in 15 minutes',
+  { keyGenerator: identityKeyFor, skipSuccessfulRequests: true },
 );
 
 /** Phone lookups reveal whether a number is registered — cap enumeration. */
@@ -170,17 +185,17 @@ export const checkPhoneLimiter = build(
   'Too many phone checks, slow down',
 );
 
-/** Password-reset requests per phone number. */
-export const forgotPasswordPhoneLimiter = build(
-  'forgot-phone',
+/** Password-reset requests per email address. */
+export const forgotPasswordEmailLimiter = build(
+  'forgot-email',
   60 * 60_000,
   3,
-  'Too many password reset requests for this number, try again in an hour',
-  { keyGenerator: phoneKeyFor },
+  'Too many password reset requests for this email, try again in an hour',
+  { keyGenerator: identityKeyFor },
 );
 
-/** SMS costs money and is the most abusable endpoint in the app. */
-export const smsLimiter = build('sms', 60 * 60_000, 5, 'Too many SMS requests, try again in an hour');
+/** Every email sent is a request someone can abuse - cap them per caller. */
+export const emailSendLimiter = build('email', 60 * 60_000, 5, 'Too many email requests, try again in an hour');
 
 /** Posting jobs — stops a client flooding the matching queue. */
 export const orderCreateLimiter = build('order', 60 * 60_000, 20, 'Too many jobs posted, try again later');

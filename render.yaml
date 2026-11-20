@@ -63,16 +63,22 @@ services:
       - key: CORS_ORIGINS
         sync: false
 
-      # Eskiz refuses an empty account, so the credentials have to land in the
-      # same change that selects the provider.
+      # Verification codes (password reset) go out by email. Eskiz SMS needs a
+      # registered company, so SMS stays off: SMS_PROVIDER=console.
       - key: SMS_PROVIDER
-        value: eskiz
-      - key: ESKIZ_EMAIL
+        value: console
+      - key: MAIL_PROVIDER
+        value: smtp
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: '465'
+      - key: SMTP_USER
         sync: false
-      - key: ESKIZ_PASSWORD
+      - key: SMTP_PASSWORD
         sync: false
-      - key: ESKIZ_FROM
-        value: '4546'
+      - key: MAIL_FROM
+        sync: false
 
       # The per-job fee a pro pays on accept; 0 turns payments off.
       - key: ORDER_ACCEPT_FEE

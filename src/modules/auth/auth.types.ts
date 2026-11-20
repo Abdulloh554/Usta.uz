@@ -3,6 +3,7 @@ import type { Language, UserRole } from '../../common/types';
 export type PublicUser = {
   id: string;
   phone: string;
+  email?: string;
   firstName: string;
   lastName: string;
   fullName: string;

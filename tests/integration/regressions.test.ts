@@ -278,6 +278,7 @@ describe('regressions found in role QA', () => {
     const proPayload = {
       firstName: 'Sardor',
       lastName: 'Karimov',
+      email: 'sardor@example.com',
       phone: '+998971112233',
       password: 'secret123',
       confirmPassword: 'secret123',
@@ -422,6 +423,7 @@ describe('regressions found in role QA', () => {
       const response = await request(app).post(`${PREFIX}/auth/register`).send({
         firstName: 'Jasur',
         lastName: 'Aliyev',
+        email: 'jasur@example.com',
         phone: '+998971119988',
         password: 'secret123',
         confirmPassword: 'secret123',
@@ -481,6 +483,7 @@ describe('regressions found in role QA', () => {
       const reused = await request(app).post(`${PREFIX}/auth/register`).send({
         firstName: 'Yangi',
         lastName: 'Foydalanuvchi',
+        email: 'yangi@example.com',
         phone: master.phone,
         password: 'secret123',
         confirmPassword: 'secret123',

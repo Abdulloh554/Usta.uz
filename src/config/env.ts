@@ -94,6 +94,17 @@ const schema = z.object({
   PLAYMOBILE_BASE_URL: z.string().default('https://send.smsxabar.uz/broker-api'),
   PLAYMOBILE_LOGIN: z.string().default(''),
   PLAYMOBILE_PASSWORD: z.string().default(''),
+  /**
+   * Email is the channel for verification codes (SMS needs a registered company
+   * with Eskiz). `console` logs the code instead of sending it — the dev/test default.
+   */
+  MAIL_PROVIDER: z.enum(['smtp', 'console']).default('console'),
+  SMTP_HOST: z.string().default('smtp.gmail.com'),
+  SMTP_PORT: z.coerce.number().int().positive().default(465),
+  SMTP_USER: z.string().default(''),
+  SMTP_PASSWORD: z.string().default(''),
+  /** `"Ustamiz" <you@gmail.com>`; falls back to SMTP_USER when empty. */
+  MAIL_FROM: z.string().default(''),
   SMS_CODE_TTL_SECONDS: z.coerce.number().int().positive().default(300),
   SMS_CODE_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
 

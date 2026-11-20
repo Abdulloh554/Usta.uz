@@ -9,6 +9,7 @@ process.env.JWT_ACCESS_SECRET = 'test-access-secret-that-is-long-enough-32';
 process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-that-is-long-enough-32';
 process.env.BCRYPT_ROUNDS = '4';
 process.env.SMS_PROVIDER = 'console';
+process.env.MAIL_PROVIDER = 'console';
 process.env.ORDER_ACCEPT_FEE = '4999';
 process.env.MATCH_OFFER_TIMEOUT_SECONDS = '45';
 // Off unless a test turns them on: a developer's `.env` must not leak keys in.

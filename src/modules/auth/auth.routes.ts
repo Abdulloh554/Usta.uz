@@ -4,10 +4,10 @@ import { authenticate } from '../../common/middlewares/auth.middleware';
 import {
   authLimiter,
   checkPhoneLimiter,
-  forgotPasswordPhoneLimiter,
+  emailSendLimiter,
+  forgotPasswordEmailLimiter,
+  loginAccountLimiter,
   loginIpLimiter,
-  loginPhoneLimiter,
-  smsLimiter,
 } from '../../common/middlewares/rateLimit.middleware';
 import * as controller from './auth.controller';
 import {
@@ -32,7 +32,7 @@ authRouter.post('/register', authLimiter, validate({ body: registerSchema }), co
 authRouter.post(
   '/login',
   loginIpLimiter,
-  loginPhoneLimiter,
+  loginAccountLimiter,
   validate({ body: loginSchema }),
   controller.login,
 );
@@ -56,8 +56,8 @@ authRouter.post('/logout-all', authenticate, controller.logoutEverywhere);
 
 authRouter.post(
   '/forgot-password',
-  smsLimiter,
-  forgotPasswordPhoneLimiter,
+  emailSendLimiter,
+  forgotPasswordEmailLimiter,
   validate({ body: forgotPasswordSchema }),
   controller.forgotPassword,
 );

@@ -8,6 +8,14 @@ const phone = z
   .min(1, 'Phone number is required')
   .refine(isValidUzPhone, 'Enter a valid Uzbek mobile number');
 
+const email = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(1, 'Email is required')
+  .max(254, 'Email is too long')
+  .email('Enter a valid email address');
+
 const password = z
   .string()
   .min(6, 'Password must be at least 6 characters')
@@ -19,6 +27,7 @@ export const registerSchema = z
   .object({
     firstName: name,
     lastName: name,
+    email,
     phone,
     password,
     confirmPassword: password,
@@ -53,22 +62,37 @@ export const registerSchema = z
     }
   });
 
-export const loginSchema = z.object({
-  phone,
-  password: z.string().min(1, 'Password is required'),
-});
+/**
+ * Sign-in is by email. `phone` stays accepted only so accounts created before
+ * email sign-in (no email on file) can still get in; the apps send `email`.
+ */
+export const loginSchema = z
+  .object({
+    email: email.optional(),
+    phone: phone.optional(),
+    password: z.string().min(1, 'Password is required'),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.email && !value.phone) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['email'],
+        message: 'Email is required',
+      });
+    }
+  });
 
 export const refreshSchema = z.object({
   refreshToken: z.string().min(1, 'Refresh token is required'),
 });
 
 export const forgotPasswordSchema = z.object({
-  phone,
+  email,
 });
 
 export const resetPasswordSchema = z
   .object({
-    phone,
+    email,
     code: z.string().regex(/^\d{6}$/, 'The code is six digits'),
     password,
     confirmPassword: password,

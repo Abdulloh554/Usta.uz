@@ -144,10 +144,15 @@ If `redis` reads anything other than `up`, the instance is unreachable — check
 that it is in the same region and that the **internal** connection string was
 used, not the external one.
 
-## SMS
+## Email (verification codes)
 
-`SMS_PROVIDER` is set to `eskiz`, but `ESKIZ_EMAIL` and `ESKIZ_PASSWORD` are
-empty, so the schema's defaults let the service boot while every verification
-code fails to send — sign-in is broken until those two are filled in. Setting
-`SMS_PROVIDER=console` instead logs the code rather than sending it, which is
-the usable state while the Eskiz account is still being set up.
+Sign-in is by email and password; the one code the app sends - the
+password-reset code - goes out by email. `MAIL_PROVIDER=smtp` sends through
+`SMTP_HOST`/`SMTP_PORT` (Gmail by default, port 465) with `SMTP_USER` and
+`SMTP_PASSWORD` - for Gmail that is an **app password**, not the account
+password. `MAIL_FROM` is optional (`"Ustamiz" <you@gmail.com>`); it falls back to
+`SMTP_USER`. With `MAIL_PROVIDER=console` the code is logged instead of sent.
+
+SMS is switched off (`SMS_PROVIDER=console`): Eskiz only serves registered
+companies. The Eskiz and Play Mobile providers stay in the code for when that
+changes.

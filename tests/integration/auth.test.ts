@@ -4,12 +4,14 @@ import { createApp } from '../../src/app';
 import { User } from '../../src/modules/user/user.model';
 import { MasterProfile } from '../../src/modules/user/masterProfile.model';
 import { Craft, UserRole } from '../../src/common/types';
+import { mailProvider } from '../../src/config/mail';
 
 const PREFIX = '/api/v1';
 
 const clientPayload = {
   firstName: 'Dilnoza',
   lastName: 'Rahimova',
+  email: 'dilnoza@example.com',
   phone: '+998901234567',
   password: 'secret123',
   confirmPassword: 'secret123',
@@ -31,6 +33,7 @@ describe('auth routes', () => {
       expect(response.status).toBe(201);
       expect(response.body.success).toBe(true);
       expect(response.body.data.user.phone).toBe('+998901234567');
+      expect(response.body.data.user.email).toBe('dilnoza@example.com');
       expect(response.body.data.user.fullName).toBe('Dilnoza Rahimova');
       expect(response.body.data.user.initials).toBe('DR');
       expect(response.body.data.accessToken).toEqual(expect.any(String));
@@ -54,6 +57,7 @@ describe('auth routes', () => {
         .post(`${PREFIX}/auth/register`)
         .send({
           ...clientPayload,
+          email: 'usta@example.com',
           phone: '+998945551234',
           role: UserRole.MASTER,
           crafts: [Craft.ELECTRICIAN, Craft.PLUMBER],
@@ -109,10 +113,35 @@ describe('auth routes', () => {
 
     it('refuses a phone number that is already registered', async () => {
       await request(app).post(`${PREFIX}/auth/register`).send(clientPayload);
-      const response = await request(app).post(`${PREFIX}/auth/register`).send(clientPayload);
+      const response = await request(app)
+        .post(`${PREFIX}/auth/register`)
+        .send({ ...clientPayload, email: 'other@example.com' });
 
       expect(response.status).toBe(409);
       expect(response.body.error.code).toBe('PHONE_TAKEN');
+    });
+
+    it('refuses an email that is already registered, whatever its case', async () => {
+      await request(app).post(`${PREFIX}/auth/register`).send(clientPayload);
+      const response = await request(app)
+        .post(`${PREFIX}/auth/register`)
+        .send({ ...clientPayload, email: 'Dilnoza@Example.com', phone: '+998909876543' });
+
+      expect(response.status).toBe(409);
+      expect(response.body.error.code).toBe('EMAIL_TAKEN');
+    });
+
+    it('rejects a sign-up without a valid email', async () => {
+      const missing = await request(app)
+        .post(`${PREFIX}/auth/register`)
+        .send({ ...clientPayload, email: undefined });
+      expect(missing.status).toBe(422);
+      expect(missing.body.error.details).toContainEqual(expect.objectContaining({ field: 'email' }));
+
+      const malformed = await request(app)
+        .post(`${PREFIX}/auth/register`)
+        .send({ ...clientPayload, email: 'not-an-email' });
+      expect(malformed.status).toBe(422);
     });
 
     it('accepts a number written the way the design formats it', async () => {
@@ -142,7 +171,7 @@ describe('auth routes', () => {
 
       const session = await request(app)
         .post(`${PREFIX}/auth/login`)
-        .send({ phone, password: clientPayload.password });
+        .send({ email: clientPayload.email, password: clientPayload.password });
 
       expect(session.status).toBe(200);
       expect(session.body.data.accessToken).toEqual(expect.any(String));
@@ -154,28 +183,63 @@ describe('auth routes', () => {
       await request(app).post(`${PREFIX}/auth/register`).send(clientPayload);
     });
 
-    it('signs in with the right credentials', async () => {
+    it('signs in with the right email and password', async () => {
       const response = await request(app)
         .post(`${PREFIX}/auth/login`)
-        .send({ phone: clientPayload.phone, password: clientPayload.password });
+        .send({ email: clientPayload.email, password: clientPayload.password });
 
       expect(response.status).toBe(200);
       expect(response.body.data.accessToken).toEqual(expect.any(String));
     });
 
+    it('treats the email case-insensitively', async () => {
+      const response = await request(app)
+        .post(`${PREFIX}/auth/login`)
+        .send({ email: '  DILNOZA@Example.COM ', password: clientPayload.password });
+
+      expect(response.status).toBe(200);
+    });
+
+    it('does not need the phone number to sign in', async () => {
+      const response = await request(app)
+        .post(`${PREFIX}/auth/login`)
+        .send({ email: clientPayload.email, password: clientPayload.password });
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.user.phone).toBe('+998901234567');
+    });
+
+    it('still lets an account without an email sign in by phone', async () => {
+      await User.updateOne({ phone: clientPayload.phone }, { $unset: { email: 1 } });
+
+      const response = await request(app)
+        .post(`${PREFIX}/auth/login`)
+        .send({ phone: clientPayload.phone, password: clientPayload.password });
+
+      expect(response.status).toBe(200);
+    });
+
+    it('rejects a login that names neither email nor phone', async () => {
+      const response = await request(app)
+        .post(`${PREFIX}/auth/login`)
+        .send({ password: clientPayload.password });
+
+      expect(response.status).toBe(422);
+    });
+
     it('rejects a wrong password without saying which field was wrong', async () => {
       const response = await request(app)
         .post(`${PREFIX}/auth/login`)
-        .send({ phone: clientPayload.phone, password: 'wrong-password' });
+        .send({ email: clientPayload.email, password: 'wrong-password' });
 
       expect(response.status).toBe(401);
       expect(response.body.error.code).toBe('INVALID_CREDENTIALS');
     });
 
-    it('gives an unknown number the same answer as a wrong password', async () => {
+    it('gives an unknown email the same answer as a wrong password', async () => {
       const response = await request(app)
         .post(`${PREFIX}/auth/login`)
-        .send({ phone: '+998909999999', password: 'secret123' });
+        .send({ email: 'nobody@example.com', password: 'secret123' });
 
       expect(response.status).toBe(401);
       expect(response.body.error.code).toBe('INVALID_CREDENTIALS');
@@ -189,7 +253,7 @@ describe('auth routes', () => {
 
       const response = await request(app)
         .post(`${PREFIX}/auth/login`)
-        .send({ phone: clientPayload.phone, password: clientPayload.password });
+        .send({ email: clientPayload.email, password: clientPayload.password });
 
       expect(response.status).toBe(403);
       expect(response.body.error.message).toBe('Repeated false jobs');
@@ -295,10 +359,10 @@ describe('auth routes', () => {
   });
 
   describe('password reset', () => {
-    it('reports success for an unknown number, so numbers cannot be enumerated', async () => {
+    it('reports success for an unknown email, so addresses cannot be enumerated', async () => {
       const response = await request(app)
         .post(`${PREFIX}/auth/forgot-password`)
-        .send({ phone: '+998909999999' });
+        .send({ email: 'nobody@example.com' });
 
       expect(response.status).toBe(200);
       expect(response.body.data.sent).toBe(true);
@@ -306,10 +370,10 @@ describe('auth routes', () => {
 
     it('rejects a wrong code', async () => {
       await request(app).post(`${PREFIX}/auth/register`).send(clientPayload);
-      await request(app).post(`${PREFIX}/auth/forgot-password`).send({ phone: clientPayload.phone });
+      await request(app).post(`${PREFIX}/auth/forgot-password`).send({ email: clientPayload.email });
 
       const response = await request(app).post(`${PREFIX}/auth/reset-password`).send({
-        phone: clientPayload.phone,
+        email: clientPayload.email,
         code: '000000',
         password: 'newsecret1',
         confirmPassword: 'newsecret1',
@@ -317,6 +381,45 @@ describe('auth routes', () => {
 
       expect(response.status).toBe(401);
       expect(response.body.error.code).toBe('INVALID_CODE');
+    });
+
+    it('emails a code, then lets the new password in and the old one out', async () => {
+      await request(app).post(`${PREFIX}/auth/register`).send(clientPayload);
+
+      const sent: string[] = [];
+      const spy = jest
+        .spyOn(mailProvider, 'send')
+        .mockImplementation(async (message) => {
+          sent.push(message.text);
+        });
+
+      const forgot = await request(app)
+        .post(`${PREFIX}/auth/forgot-password`)
+        .send({ email: 'DILNOZA@example.com' });
+      expect(forgot.status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0]![0].to).toBe('dilnoza@example.com');
+
+      const code = /(\d{6})/.exec(sent[0]!)![1]!;
+      const reset = await request(app).post(`${PREFIX}/auth/reset-password`).send({
+        email: clientPayload.email,
+        code,
+        password: 'newsecret1',
+        confirmPassword: 'newsecret1',
+      });
+      expect(reset.status).toBe(200);
+
+      const fresh = await request(app)
+        .post(`${PREFIX}/auth/login`)
+        .send({ email: clientPayload.email, password: 'newsecret1' });
+      expect(fresh.status).toBe(200);
+
+      const stale = await request(app)
+        .post(`${PREFIX}/auth/login`)
+        .send({ email: clientPayload.email, password: clientPayload.password });
+      expect(stale.status).toBe(401);
+
+      spy.mockRestore();
     });
   });
 

@@ -318,7 +318,7 @@ export const deleteAccount = async (userId: string, password: string): Promise<v
         deletedAt: new Date(),
         pushTokens: [],
       },
-      $unset: { avatarUrl: 1, blockReason: 1 },
+      $unset: { avatarUrl: 1, blockReason: 1, email: 1 },
     },
   );
 

@@ -2,25 +2,34 @@
 import mongoose from 'mongoose';
 import { connectDatabase } from '../src/config/database';
 import { normalizePhone, isValidUzPhone } from '../src/common/utils/phone';
+import { normalizeEmail } from '../src/common/utils/email';
 import { UserRole } from '../src/common/types';
 import { User } from '../src/modules/user/user.model';
 
 /**
  * Creates the first admin account, or promotes an existing one.
  *
- *   npm run admin:create -- +998901234567 "S3cret-pass" Ism Familiya
+ *   npm run admin:create -- admin@example.com "S3cret-pass" Ism Familiya +998901234567
  *
- * Sign-up deliberately refuses the admin role, so this is the only way in. An
- * existing account with the number is promoted and its password replaced.
+ * The admin signs in with the email. The phone is only needed when the account
+ * is created (or to attach an email to an older, phone-only account). Sign-up
+ * deliberately refuses the admin role, so this is the only way in. An existing
+ * account with the email (or phone) is promoted and its password replaced.
  */
 const main = async (): Promise<void> => {
-  const [phoneArg, password, firstName = 'Admin', lastName = 'Usta'] = process.argv.slice(2);
+  const [emailArg, password, firstName = 'Admin', lastName = 'Usta', phoneArg] = process.argv.slice(2);
 
-  if (!phoneArg || !password) {
-    console.error('Usage: npm run admin:create -- <phone> <password> [firstName] [lastName]');
+  if (!emailArg || !password) {
+    console.error(
+      'Usage: npm run admin:create -- <email> <password> [firstName] [lastName] [phone]',
+    );
     process.exit(1);
   }
-  if (!isValidUzPhone(phoneArg)) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailArg)) {
+    console.error(`"${emailArg}" is not a valid email address.`);
+    process.exit(1);
+  }
+  if (phoneArg && !isValidUzPhone(phoneArg)) {
     console.error(`"${phoneArg}" is not a valid Uzbek mobile number.`);
     process.exit(1);
   }
@@ -30,19 +39,30 @@ const main = async (): Promise<void> => {
   }
 
   await connectDatabase();
-  const phone = normalizePhone(phoneArg);
+  const email = normalizeEmail(emailArg);
+  const phone = phoneArg ? normalizePhone(phoneArg) : undefined;
 
-  const existing = await User.findOne({ phone }).select('+passwordHash');
+  const existing =
+    (await User.findOne({ email }).select('+passwordHash')) ??
+    (phone ? await User.findOne({ phone }).select('+passwordHash') : null);
+
   if (existing) {
     existing.role = UserRole.ADMIN;
+    existing.email = email;
     existing.passwordHash = password;
     existing.isBlocked = false;
     existing.isActive = true;
     await existing.save();
-    console.log(`Promoted ${existing.fullName()} (${phone}) to admin.`);
+    console.log(`Promoted ${existing.fullName()} (${email}) to admin.`);
   } else {
+    if (!phone) {
+      console.error('A new admin needs a phone number as the last argument.');
+      await mongoose.disconnect();
+      process.exit(1);
+    }
     const user = await User.create({
       phone,
+      email,
       passwordHash: password,
       firstName,
       lastName,
@@ -50,7 +70,7 @@ const main = async (): Promise<void> => {
       acceptedRulesAt: new Date(),
       isPhoneVerified: true,
     });
-    console.log(`Created admin ${user.fullName()} (${phone}).`);
+    console.log(`Created admin ${user.fullName()} (${email}).`);
   }
 
   await mongoose.disconnect();

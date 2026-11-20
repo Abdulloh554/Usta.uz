@@ -7,6 +7,8 @@ import { Language, UserRole } from '../../common/types';
 export interface IUser {
   _id: Types.ObjectId;
   phone: string;
+  /** Sign-in identity. Optional only for accounts created before email sign-in. */
+  email?: string;
   passwordHash: string;
   firstName: string;
   lastName: string;
@@ -48,6 +50,15 @@ const userSchema = new Schema<IUser, UserModel, IUserMethods>(
       trim: true,
       // Canonical form only — `normalizePhone` produces it before we ever get here.
       match: [/^\+998\d{9}$/, 'Phone must be stored as +998XXXXXXXXX'],
+    },
+    email: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      maxlength: 254,
+      // Sparse: accounts that predate email sign-in have none, and must not collide.
+      unique: true,
+      sparse: true,
     },
     passwordHash: {
       type: String,
