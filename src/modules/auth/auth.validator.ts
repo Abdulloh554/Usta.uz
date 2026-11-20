@@ -23,20 +23,25 @@ const password = z
 
 const name = z.string().trim().min(2, 'Too short').max(50, 'Too long');
 
+const code = z.string().trim().regex(/^\d{6}$/, 'The code is six digits');
+
+/** Step one of sign-up: the address the code goes to, and the number to keep unique. */
+export const registerRequestSchema = z.object({ email, phone });
+
+/** Step two: the whole form plus the code that was emailed. No password anywhere. */
 export const registerSchema = z
   .object({
     firstName: name,
     lastName: name,
     email,
     phone,
-    password,
-    confirmPassword: password,
+    code,
     role: z.enum([UserRole.CLIENT, UserRole.MASTER, UserRole.SELLER]),
     language: z.nativeEnum(Language).default(Language.UZ),
     acceptedRules: z.literal(true, {
       errorMap: () => ({ message: 'You must accept the app rules' }),
     }),
-    /** Pros only — the trades picked on the sign-up form. */
+    /** Pros only - the trades picked on the sign-up form. */
     crafts: z
       .array(z.nativeEnum(Craft))
       .max(12)
@@ -46,13 +51,6 @@ export const registerSchema = z
     regions: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   })
   .superRefine((value, ctx) => {
-    if (value.password !== value.confirmPassword) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['confirmPassword'],
-        message: 'Passwords do not match',
-      });
-    }
     if (value.role === UserRole.MASTER && (!value.crafts || value.crafts.length === 0)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -62,23 +60,30 @@ export const registerSchema = z
     }
   });
 
+/** Sends the sign-in code. Always answers the same, whether or not the account exists. */
+export const loginRequestSchema = z.object({ email });
+
 /**
- * Sign-in is by email. `phone` stays accepted only so accounts created before
- * email sign-in (no email on file) can still get in; the apps send `email`.
+ * Sign-in is by email and the code mailed to it. A password is still accepted
+ * for accounts that have one (admins, and people who signed up before codes),
+ * and `phone` for accounts that have no email yet.
  */
 export const loginSchema = z
   .object({
     email: email.optional(),
     phone: phone.optional(),
-    password: z.string().min(1, 'Password is required'),
+    password: z.string().min(1, 'Password is required').optional(),
+    code: code.optional(),
   })
   .superRefine((value, ctx) => {
     if (!value.email && !value.phone) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['email'],
-        message: 'Email is required',
-      });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['email'], message: 'Email is required' });
+    }
+    if (value.code && !value.email) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['email'], message: 'Email is required' });
+    }
+    if (!value.code && !value.password) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['code'], message: 'The code is required' });
     }
   });
 
@@ -112,6 +117,8 @@ export const checkPhoneSchema = z.object({
 });
 
 export type RegisterInput = z.infer<typeof registerSchema>;
+export type RegisterRequestInput = z.infer<typeof registerRequestSchema>;
+export type LoginRequestInput = z.infer<typeof loginRequestSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RefreshInput = z.infer<typeof refreshSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;

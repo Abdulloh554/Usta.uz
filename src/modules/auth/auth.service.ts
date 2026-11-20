@@ -3,6 +3,7 @@ import { env } from '../../config/env';
 import { logger } from '../../config/logger';
 import { mailProvider } from '../../config/mail';
 import {
+  BadRequestError,
   ConflictError,
   ForbiddenError,
   NotFoundError,
@@ -24,7 +25,9 @@ import { MasterProfile } from '../user/masterProfile.model';
 import type {
   ForgotPasswordInput,
   LoginInput,
+  LoginRequestInput,
   RegisterInput,
+  RegisterRequestInput,
   ResetPasswordInput,
 } from './auth.validator';
 import type { AuthResult, PhoneCheckResult, PublicUser } from './auth.types';
@@ -88,10 +91,78 @@ const assertUsable = (user: UserDocument): void => {
   }
 };
 
+export type OtpPurpose = 'login' | 'register' | 'delete';
+
+const OTP_MAIL: Record<OtpPurpose, { subject: string; lead: string }> = {
+  login: { subject: 'USTA.UZ: kirish kodi', lead: 'Kirish kodi' },
+  register: { subject: 'USTA.UZ: tasdiqlash kodi', lead: 'Email tasdiqlash kodi' },
+  delete: { subject: 'USTA.UZ: hisobni o\u2018chirish kodi', lead: 'Hisobni o\u2018chirish kodi' },
+};
+
+/** Stores a fresh six-digit code (hashed) for the purpose and mails it. */
+const sendOtp = async (purpose: OtpPurpose, email: string): Promise<void> => {
+  const code = generateSmsCode();
+  await redis.set(keys.otpCode(purpose, email), hashToken(code), 'EX', env.SMS_CODE_TTL_SECONDS);
+  await redis.del(keys.otpAttempts(purpose, email));
+
+  const minutes = Math.round(env.SMS_CODE_TTL_SECONDS / 60);
+  const { subject, lead } = OTP_MAIL[purpose];
+  const note = `Kod ${minutes} daqiqa amal qiladi. Agar bu so'rovni siz yubormagan bo'lsangiz, xatni e'tiborsiz qoldiring.`;
+  await mailProvider.send({
+    to: email,
+    subject,
+    text: `${lead}: ${code}\n\n${note}`,
+    html: `<p>${lead}:</p><p style="font-size:28px;font-weight:700;letter-spacing:4px">${code}</p><p>${note}</p>`,
+  });
+};
+
 /**
- * Sign-up collects the email (the sign-in identity) and the phone number. The
+ * Checks a code and spends it. A fixed number of wrong guesses burns the code,
+ * so six digits cannot be brute-forced inside its few minutes of life.
+ */
+export const consumeOtp = async (purpose: OtpPurpose, email: string, code: string): Promise<void> => {
+  const attemptsKey = keys.otpAttempts(purpose, email);
+  const attempts = await redis.incr(attemptsKey);
+  if (attempts === 1) await redis.expire(attemptsKey, env.SMS_CODE_TTL_SECONDS);
+  if (attempts > env.SMS_CODE_MAX_ATTEMPTS) {
+    await redis.del(keys.otpCode(purpose, email));
+    throw new TooManyRequestsError('Too many wrong codes - request a new one');
+  }
+
+  const stored = await redis.get(keys.otpCode(purpose, email));
+  if (!stored || stored !== hashToken(code)) {
+    throw new UnauthorizedError('The code is wrong or has expired', 'INVALID_CODE');
+  }
+
+  await redis.del(keys.otpCode(purpose, email), attemptsKey);
+};
+
+/**
+ * Sign-up step one: mail the confirmation code. Refuses an address or number
+ * that already has an account, so the form can send the person to sign in.
+ */
+export const requestRegisterCode = async (input: RegisterRequestInput): Promise<{ sent: true }> => {
+  const email = normalizeEmail(input.email);
+  const phone = normalizePhone(input.phone);
+
+  const [emailTaken, phoneTaken] = await Promise.all([User.exists({ email }), User.exists({ phone })]);
+  if (emailTaken) {
+    throw new ConflictError('An account with this email already exists', 'EMAIL_TAKEN');
+  }
+  if (phoneTaken) {
+    throw new ConflictError('An account with this phone number already exists', 'PHONE_TAKEN');
+  }
+
+  await sendOtp('register', email);
+  logger.info('Sign-up code sent', { email: maskEmail(email) });
+  return { sent: true };
+};
+
+/**
+ * Sign-up step two. The emailed code proves the address is theirs; the phone
  * number is checked by its operator code only - no SMS - which keeps the cost
- * of a failed sign-up at zero.
+ * of a failed sign-up at zero. There is no password: the account signs in with
+ * a code mailed to the address, every time.
  */
 export const register = async (input: RegisterInput): Promise<AuthResult> => {
   const phone = normalizePhone(input.phone);
@@ -108,10 +179,11 @@ export const register = async (input: RegisterInput): Promise<AuthResult> => {
     throw new ConflictError('An account with this phone number already exists', 'PHONE_TAKEN');
   }
 
+  await consumeOtp('register', email, input.code);
+
   const user = await User.create({
     phone,
     email,
-    passwordHash: input.password,
     firstName: input.firstName,
     lastName: input.lastName,
     role: input.role,
@@ -139,8 +211,40 @@ export const register = async (input: RegisterInput): Promise<AuthResult> => {
   return issueSession(user);
 };
 
+/** Sign-in step one: mail a code. Answers the same whether or not the account exists. */
+export const requestLoginCode = async (input: LoginRequestInput): Promise<{ sent: true }> => {
+  const email = normalizeEmail(input.email);
+  const user = await User.findOne({ email });
+
+  if (!user || user.isBlocked || !user.isActive) {
+    logger.info('Sign-in code requested for an address with no usable account', {
+      email: maskEmail(email),
+    });
+    return { sent: true };
+  }
+
+  await sendOtp('login', email);
+  logger.info('Sign-in code sent', { userId: String(user._id), email: maskEmail(email) });
+  return { sent: true };
+};
+
 export const login = async (input: LoginInput): Promise<AuthResult> => {
-  // Email is the identity; a phone is honoured only for accounts that have no email yet.
+  // The emailed code is the normal way in.
+  if (input.code && input.email) {
+    const email = normalizeEmail(input.email);
+    // Spent first: an unknown address never had a code, so it fails like a wrong one.
+    await consumeOtp('login', email, input.code);
+
+    const account = await User.findOne({ email });
+    if (!account) throw new UnauthorizedError('The code is wrong or has expired', 'INVALID_CODE');
+    assertUsable(account);
+
+    account.lastSeenAt = new Date();
+    await account.save();
+    return issueSession(account);
+  }
+
+  // Password: admins, and accounts created before codes. Email, or phone for accounts with no email.
   const filter = input.email
     ? { email: normalizeEmail(input.email) }
     : { phone: normalizePhone(input.phone as string) };
@@ -151,7 +255,7 @@ export const login = async (input: LoginInput): Promise<AuthResult> => {
     throw new UnauthorizedError('Email or password is incorrect', 'INVALID_CREDENTIALS');
   }
 
-  const matches = await user.comparePassword(input.password);
+  const matches = await user.comparePassword(input.password as string);
   if (!matches) {
     throw new UnauthorizedError('Email or password is incorrect', 'INVALID_CREDENTIALS');
   }
@@ -162,6 +266,20 @@ export const login = async (input: LoginInput): Promise<AuthResult> => {
   await user.save();
 
   return issueSession(user);
+};
+
+/** Mails the code that confirms deleting the account, for people who have no password. */
+export const requestDeleteCode = async (userId: string): Promise<{ sent: true }> => {
+  const user = await User.findById(userId);
+  if (!user) throw new NotFoundError('User');
+  if (!user.email) {
+    throw new BadRequestError('This account has no email on file', [
+      { field: 'email', message: 'missing' },
+    ]);
+  }
+
+  await sendOtp('delete', user.email);
+  return { sent: true };
 };
 
 /** Rotation: the presented token is verified, revoked, and replaced in one step. */

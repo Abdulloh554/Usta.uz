@@ -72,14 +72,22 @@ userRouter.patch(
 /**
  * Google Play requires an in-app route to account deletion for any app that
  * lets people create one. The password re-check is what stops a borrowed,
- * unlocked phone from wiping someone's account.
+ * unlocked phone from wiping someone's account. Accounts that sign in with a
+ * mailed code have no password, so a code mailed to them is accepted instead.
  */
 userRouter.delete(
   '/me',
   authenticate,
-  validate({ body: z.object({ password: z.string().min(1, 'Password is required') }) }),
+  validate({
+    body: z
+      .object({
+        password: z.string().min(1).optional(),
+        code: z.string().regex(/^\d{6}$/, 'The code is six digits').optional(),
+      })
+      .refine((body) => body.password || body.code, 'Password or code is required'),
+  }),
   asyncHandler<AuthenticatedRequest>(async (req, res) => {
-    await userService.deleteAccount(req.user.id, (req.body as { password: string }).password);
+    await userService.deleteAccount(req.user.id, req.body as { password?: string; code?: string });
     ok(res, { deleted: true });
   }),
 );

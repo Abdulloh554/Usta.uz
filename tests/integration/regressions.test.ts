@@ -30,6 +30,7 @@ import {
 } from '../../src/common/types';
 import { issueTokenPair } from '../../src/common/utils/token';
 import { makeClient, makeMaster, makeOrder, makeSeller } from '../helpers/factories';
+import { requestCode, signUp } from '../helpers/otp';
 
 /**
  * One test per defect the role-by-role QA pass found, so none of them can come
@@ -280,24 +281,20 @@ describe('regressions found in role QA', () => {
       lastName: 'Karimov',
       email: 'sardor@example.com',
       phone: '+998971112233',
-      password: 'secret123',
-      confirmPassword: 'secret123',
       role: UserRole.MASTER,
       acceptedRules: true,
       crafts: ['electrician'],
     };
 
     it('gives a new pro no sign-up bonus', async () => {
-      const response = await request(app).post(`${PREFIX}/auth/register`).send(proPayload);
+      const response = await signUp(app, proPayload);
       expect(response.status).toBe(201);
       expect(response.body.data.user.balance).toBe(0);
       expect(await Transaction.countDocuments({ user: response.body.data.user.id })).toBe(0);
     });
 
     it('rejects the same trade picked twice', async () => {
-      const response = await request(app)
-        .post(`${PREFIX}/auth/register`)
-        .send({ ...proPayload, crafts: ['plumber', 'plumber'] });
+      const response = await signUp(app, { ...proPayload, crafts: ['plumber', 'plumber'] });
       expect(response.status).toBe(422);
     });
   });
@@ -420,13 +417,11 @@ describe('regressions found in role QA', () => {
     });
 
     it('gives a new pro no bonus and no ledger entry', async () => {
-      const response = await request(app).post(`${PREFIX}/auth/register`).send({
+      const response = await signUp(app, {
         firstName: 'Jasur',
         lastName: 'Aliyev',
         email: 'jasur@example.com',
         phone: '+998971119988',
-        password: 'secret123',
-        confirmPassword: 'secret123',
         role: UserRole.MASTER,
         acceptedRules: true,
         crafts: ['plumber'],
@@ -480,13 +475,11 @@ describe('regressions found in role QA', () => {
       expect(after.status).toBe(401);
 
       // And the number can sign up again.
-      const reused = await request(app).post(`${PREFIX}/auth/register`).send({
+      const reused = await signUp(app, {
         firstName: 'Yangi',
         lastName: 'Foydalanuvchi',
         email: 'yangi@example.com',
         phone: master.phone,
-        password: 'secret123',
-        confirmPassword: 'secret123',
         role: UserRole.CLIENT,
         acceptedRules: true,
       });
@@ -515,6 +508,30 @@ describe('regressions found in role QA', () => {
 
       expect(response.status).toBe(409);
       expect(response.body.error.code).toBe('ACTIVE_ORDER_EXISTS');
+    });
+
+    it('lets a code-only account confirm with a mailed code instead of a password', async () => {
+      const client = await makeClient();
+      await User.updateOne(
+        { _id: client._id },
+        { $set: { email: 'codeonly@example.com' }, $unset: { passwordHash: 1 } },
+      );
+      const auth = { Authorization: bearer(client.id as string, UserRole.CLIENT) };
+
+      const wrong = await request(app)
+        .delete(`${PREFIX}/users/me`)
+        .set(auth)
+        .send({ code: '000000' });
+      expect(wrong.status).toBe(401);
+
+      const { status, code } = await requestCode(app, '/auth/delete-code', {}, auth);
+      expect(status).toBe(200);
+
+      const response = await request(app).delete(`${PREFIX}/users/me`).set(auth).send({ code });
+      expect(response.status).toBe(200);
+      expect((await User.findById(client._id))!.deletedAt).toBeInstanceOf(Date);
+      // The address is released along with the number.
+      expect((await User.findById(client._id))!.email).toBeUndefined();
     });
   });
 

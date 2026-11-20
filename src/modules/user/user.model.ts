@@ -9,7 +9,8 @@ export interface IUser {
   phone: string;
   /** Sign-in identity. Optional only for accounts created before email sign-in. */
   email?: string;
-  passwordHash: string;
+  /** Absent for accounts that sign in with an emailed code only. */
+  passwordHash?: string;
   firstName: string;
   lastName: string;
   role: UserRole;
@@ -62,7 +63,6 @@ const userSchema = new Schema<IUser, UserModel, IUserMethods>(
     },
     passwordHash: {
       type: String,
-      required: [true, 'Password is required'],
       select: false,
     },
     firstName: {
@@ -126,7 +126,7 @@ userSchema.index({ lastSeenAt: -1 });
  * write a plaintext password by going around the auth service.
  */
 userSchema.pre('save', async function hashPassword(next) {
-  if (!this.isModified('passwordHash')) {
+  if (!this.isModified('passwordHash') || !this.passwordHash) {
     next();
     return;
   }
@@ -135,6 +135,8 @@ userSchema.pre('save', async function hashPassword(next) {
 });
 
 userSchema.method('comparePassword', function comparePassword(candidate: string): Promise<boolean> {
+  // No password on file (code-only account), or the hash was not selected.
+  if (!this.passwordHash) return Promise.resolve(false);
   return bcrypt.compare(candidate, this.passwordHash);
 });
 

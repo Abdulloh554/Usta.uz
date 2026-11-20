@@ -10,7 +10,7 @@ import { Chat } from '../chat/chat.model';
 import { Favorite, Product } from '../product/product.model';
 import { Notification } from '../notification/notification.model';
 import { disconnectUser } from '../../sockets/emitter';
-import { logoutEverywhere, toPublicUser } from '../auth/auth.service';
+import { consumeOtp, logoutEverywhere, toPublicUser } from '../auth/auth.service';
 import type { PublicUser } from '../auth/auth.types';
 import { MasterProfile, type IMasterProfile } from './masterProfile.model';
 import { User, type UserDocument } from './user.model';
@@ -277,11 +277,18 @@ export const workHistory = async (masterId: string, limit = 20) =>
  * identify who they were. The phone number is released, so the same number can
  * sign up again as a new account.
  */
-export const deleteAccount = async (userId: string, password: string): Promise<void> => {
+export const deleteAccount = async (
+  userId: string,
+  proof: { password?: string; code?: string },
+): Promise<void> => {
   const user = await User.findById(userId).select('+passwordHash');
   if (!user) throw new NotFoundError('User');
 
-  if (!(await user.comparePassword(password))) {
+  if (proof.code) {
+    // Code-only accounts have no password: the mailed code is the re-check.
+    if (!user.email) throw new UnauthorizedError('The code is wrong or has expired', 'INVALID_CODE');
+    await consumeOtp('delete', user.email, proof.code);
+  } else if (!proof.password || !(await user.comparePassword(proof.password))) {
     throw new UnauthorizedError('The password is incorrect', 'INVALID_CREDENTIALS');
   }
 

@@ -60,6 +60,9 @@ export const keys = {
   /** Password-reset code sent by email; `email` is already lower-cased. */
   emailCode: (email: string): string => `email:code:${email}`,
   emailAttempts: (email: string): string => `email:attempts:${email}`,
+  /** One-time code for a purpose (login / register / delete); `email` is already lower-cased. */
+  otpCode: (purpose: string, email: string): string => `otp:code:${purpose}:${email}`,
+  otpAttempts: (purpose: string, email: string): string => `otp:attempts:${purpose}:${email}`,
   refreshToken: (userId: string, tokenId: string): string => `auth:refresh:${userId}:${tokenId}`,
   refreshTokensOfUser: (userId: string): string => `auth:refresh:${userId}:*`,
   /** Unix seconds; access tokens this user was issued before it are refused. */

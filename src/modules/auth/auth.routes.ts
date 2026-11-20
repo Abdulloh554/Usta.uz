@@ -8,13 +8,16 @@ import {
   forgotPasswordEmailLimiter,
   loginAccountLimiter,
   loginIpLimiter,
+  otpEmailLimiter,
 } from '../../common/middlewares/rateLimit.middleware';
 import * as controller from './auth.controller';
 import {
   checkPhoneSchema,
   forgotPasswordSchema,
+  loginRequestSchema,
   loginSchema,
   refreshSchema,
+  registerRequestSchema,
   registerSchema,
   resetPasswordSchema,
 } from './auth.validator';
@@ -27,6 +30,22 @@ authRouter.post(
   validate({ body: checkPhoneSchema }),
   controller.checkPhone,
 );
+
+authRouter.post(
+  '/register/request',
+  emailSendLimiter,
+  otpEmailLimiter,
+  validate({ body: registerRequestSchema }),
+  controller.requestRegisterCode,
+);
+authRouter.post(
+  '/login/request',
+  emailSendLimiter,
+  otpEmailLimiter,
+  validate({ body: loginRequestSchema }),
+  controller.requestLoginCode,
+);
+authRouter.post('/delete-code', authenticate, emailSendLimiter, controller.requestDeleteCode);
 
 authRouter.post('/register', authLimiter, validate({ body: registerSchema }), controller.register);
 authRouter.post(

@@ -194,6 +194,15 @@ export const forgotPasswordEmailLimiter = build(
   { keyGenerator: identityKeyFor },
 );
 
+/** Sign-up, sign-in and delete codes per email address - a typo or two is fine, a flood is not. */
+export const otpEmailLimiter = build(
+  'otp-email',
+  60 * 60_000,
+  10,
+  'Too many code requests for this email, try again in an hour',
+  { keyGenerator: identityKeyFor },
+);
+
 /** Every email sent is a request someone can abuse - cap them per caller. */
 export const emailSendLimiter = build('email', 60 * 60_000, 5, 'Too many email requests, try again in an hour');
 

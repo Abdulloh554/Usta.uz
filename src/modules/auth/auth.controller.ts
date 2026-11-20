@@ -6,7 +6,9 @@ import * as authService from './auth.service';
 import type {
   ForgotPasswordInput,
   LoginInput,
+  LoginRequestInput,
   RegisterInput,
+  RegisterRequestInput,
   ResetPasswordInput,
 } from './auth.validator';
 import { isProduction } from '../../config/env';
@@ -35,6 +37,18 @@ const refreshTokenFrom = (req: Request): string => {
   if (!token) throw new UnauthorizedError('Refresh token is missing', 'TOKEN_MISSING');
   return token;
 };
+
+export const requestRegisterCode = asyncHandler(async (req, res) => {
+  ok(res, await authService.requestRegisterCode(req.body as RegisterRequestInput));
+});
+
+export const requestLoginCode = asyncHandler(async (req, res) => {
+  ok(res, await authService.requestLoginCode(req.body as LoginRequestInput));
+});
+
+export const requestDeleteCode = asyncHandler<AuthenticatedRequest>(async (req, res) => {
+  ok(res, await authService.requestDeleteCode(req.user.id));
+});
 
 export const register = asyncHandler(async (req, res) => {
   const result = await authService.register(req.body as RegisterInput);
