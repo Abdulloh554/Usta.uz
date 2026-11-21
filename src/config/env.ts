@@ -68,7 +68,8 @@ const schema = z.object({
    * database and wrong for a large one, where it stalls the start and can lock
    * writes — turn it off there and run `npm run indexes:sync` as a release step.
    */
-  MONGO_AUTO_INDEX: booleanish.default('true'),
+  // Zod 4 defaults are the parsed output, so this is `true`, not `'true'`.
+  MONGO_AUTO_INDEX: booleanish.default(true),
 
   REDIS_URL: z.string().min(1),
   REDIS_RESET_TOKEN: z.string().max(100).regex(/^[a-zA-Z0-9-]*$/).default(''),

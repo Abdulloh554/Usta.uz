@@ -26,7 +26,7 @@ export const validate =
           configurable: true,
         });
       }
-      if (schema.body) req.body = schema.body.parse(req.body) as unknown;
+      if (schema.body) req.body = schema.body.parse(req.body);
       next();
     } catch (error) {
       next(error);

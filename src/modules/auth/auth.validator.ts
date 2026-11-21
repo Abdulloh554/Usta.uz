@@ -38,9 +38,7 @@ export const registerSchema = z
     code,
     role: z.enum([UserRole.CLIENT, UserRole.MASTER, UserRole.SELLER]),
     language: z.nativeEnum(Language).default(Language.UZ),
-    acceptedRules: z.literal(true, {
-      errorMap: () => ({ message: 'You must accept the app rules' }),
-    }),
+    acceptedRules: z.literal(true, { error: 'You must accept the app rules' }),
     /** Pros only - the trades picked on the sign-up form. */
     crafts: z
       .array(z.nativeEnum(Craft))
