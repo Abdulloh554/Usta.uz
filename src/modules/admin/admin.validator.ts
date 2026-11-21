@@ -10,11 +10,15 @@ import {
 } from '../../common/types';
 import { AdminAction } from './adminLog.model';
 import { ReviewTarget } from '../review/review.model';
+import { MAX_TOP_UP, MIN_TOP_UP } from '../wallet/wallet.service';
 
 const search = z.string().trim().max(120).optional();
 
 /** `?flag=true` arrives as a string; `z.coerce.boolean()` would read `"false"` as true. */
-const booleanish = z.union([z.boolean(), z.enum(['true', 'false']).transform((value) => value === 'true')]);
+const booleanish = z.union([
+  z.boolean(),
+  z.enum(['true', 'false']).transform((value) => value === 'true'),
+]);
 
 export const timeseriesSchema = z.object({
   days: z.coerce.number().int().min(7).max(365).default(30),
@@ -101,10 +105,7 @@ export const broadcastSchema = z.object({
   body: z.string().trim().min(2).max(500),
 });
 
-/* — manual payments — */
-const TOP_UP_MIN = 1_000;
-const TOP_UP_MAX = 10_000_000;
-
+/* — manual payments: the same bounds a pro's request is held to — */
 export const listPaymentsSchema = paginationSchema.extend({
   status: z.enum(['pending', 'success', 'failed', 'all']).default('pending'),
   search,
@@ -113,7 +114,7 @@ export const listPaymentsSchema = paginationSchema.extend({
 export const approvePaymentSchema = z
   .object({
     /** Credit a different figure than requested — e.g. the transfer that actually arrived. */
-    amount: z.number().int().min(TOP_UP_MIN).max(TOP_UP_MAX).optional(),
+    amount: z.number().int().min(MIN_TOP_UP).max(MAX_TOP_UP).optional(),
   })
   .default({});
 
@@ -130,6 +131,36 @@ export const listLogsSchema = paginationSchema.extend({
   admin: objectIdSchema.optional(),
 });
 
+/* — the AI assistant — */
+export const assistantSchema = z
+  .object({
+    messages: z
+      .array(
+        z
+          .object({
+            role: z.enum(['user', 'assistant']),
+            content: z.string().trim().min(1).max(8000),
+          })
+          .strict()
+          .refine((message) => message.role !== 'user' || message.content.length <= 2000, {
+            message: 'User messages must be at most 2000 characters',
+          }),
+      )
+      .min(1)
+      .max(12)
+      .refine((messages) => messages[messages.length - 1]?.role === 'user', {
+        message: 'The final message must be from the user',
+      }),
+    includeStats: z.boolean().default(false),
+  })
+  .strict();
+
+export type TimeseriesQuery = z.infer<typeof timeseriesSchema>;
+export type MessagesQuery = z.infer<typeof messagesSchema>;
+export type UpdateChatInput = z.infer<typeof updateChatSchema>;
+export type UpdateProductInput = z.infer<typeof updateProductSchema>;
+export type UpdateReviewInput = z.infer<typeof updateReviewSchema>;
+export type AssistantInput = z.infer<typeof assistantSchema>;
 export type ListUsersInput = z.infer<typeof listUsersSchema>;
 export type UpdateUserStatusInput = z.infer<typeof updateUserStatusSchema>;
 export type AdjustBalanceInput = z.infer<typeof adjustBalanceSchema>;

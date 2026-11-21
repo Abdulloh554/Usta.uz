@@ -3,31 +3,7 @@ import { env } from '../../config/env';
 import { ApiError } from '../../common/errors/ApiError';
 import { OrderCategory } from '../../common/types';
 import { overview } from './stats.service';
-
-export const assistantSchema = z
-  .object({
-    messages: z
-      .array(
-        z
-          .object({
-            role: z.enum(['user', 'assistant']),
-            content: z.string().trim().min(1).max(8000),
-          })
-          .strict()
-          .refine((message) => message.role !== 'user' || message.content.length <= 2000, {
-            message: 'User messages must be at most 2000 characters',
-          }),
-      )
-      .min(1)
-      .max(12)
-      .refine((messages) => messages[messages.length - 1]?.role === 'user', {
-        message: 'The final message must be from the user',
-      }),
-    includeStats: z.boolean().default(false),
-  })
-  .strict();
-
-export type AssistantInput = z.infer<typeof assistantSchema>;
+import type { AssistantInput } from './admin.validator';
 
 export const assistantStatus = () => ({ configured: Boolean(env.GROQ_API_KEY) });
 

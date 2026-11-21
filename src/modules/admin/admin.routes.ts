@@ -1,61 +1,36 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../../common/middlewares/auth.middleware';
 import { idParamSchema, validate } from '../../common/middlewares/validate.middleware';
-import { asyncHandler, noContent, ok } from '../../common/utils/http';
-import { UserRole, type AuthenticatedRequest } from '../../common/types';
-import * as adminService from './admin.service';
-import * as statsService from './stats.service';
-import * as paymentsService from './payments.service';
-import { getBroadcast } from './broadcast.service';
-import {
-  assistantSchema,
-  assistantStatus,
-  askAssistant,
-  type AssistantInput,
-} from './assistant.service';
 import { assistantLimiter } from '../../common/middlewares/rateLimit.middleware';
-import { trafficQuerySchema, trafficReport, type TrafficQuery } from '../traffic/traffic.service';
+import { UserRole } from '../../common/types';
+import * as traffic from '../traffic/traffic.controller';
+import { trafficQuerySchema } from '../traffic/traffic.validator';
+import * as controller from './admin.controller';
 import {
   adjustBalanceSchema,
   adminCancelOrderSchema,
   approvePaymentSchema,
-  listPaymentsSchema,
-  rejectPaymentSchema,
-  resetPasswordSchema,
+  assistantSchema,
   broadcastSchema,
   listChatsSchema,
   listLogsSchema,
   listOrdersSchema,
+  listPaymentsSchema,
   listProductsSchema,
   listReviewsSchema,
   listTransactionsSchema,
   listUsersSchema,
   messagesSchema,
+  rejectPaymentSchema,
+  resetPasswordSchema,
   timeseriesSchema,
   updateChatSchema,
   updateProductSchema,
   updateReviewSchema,
   updateUserStatusSchema,
-  type AdjustBalanceInput,
-  type AdminCancelOrderInput,
-  type BroadcastInput,
-  type ListChatsInput,
-  type ListLogsInput,
-  type ListOrdersInput,
-  type ListProductsInput,
-  type ListReviewsInput,
-  type ListTransactionsInput,
-  type ListUsersInput,
-  type ApprovePaymentInput,
-  type ListPaymentsInput,
-  type RejectPaymentInput,
-  type ResetPasswordInput,
-  type UpdateUserStatusInput,
 } from './admin.validator';
 
-type AdminRequest = AuthenticatedRequest;
-
-const id = (req: AdminRequest): string => req.params.id as string;
+const byId = validate({ params: idParamSchema });
 
 /**
  * Everything under `/admin` requires an admin token. The role check sits on the
@@ -65,283 +40,104 @@ export const adminRouter = Router();
 
 adminRouter.use(authenticate, authorize(UserRole.ADMIN));
 
-adminRouter.get('/assistant/status', (_req, res) => {
-  ok(res, assistantStatus());
-});
+/* — assistant — */
+adminRouter.get('/assistant/status', controller.assistantInfo);
 adminRouter.post(
   '/assistant',
   assistantLimiter,
   validate({ body: assistantSchema }),
-  asyncHandler(async (req, res) => {
-    ok(res, await askAssistant(req.body as AssistantInput));
-  }),
-);
-
-adminRouter.get(
-  '/stats/traffic',
-  validate({ query: trafficQuerySchema }),
-  asyncHandler(async (req, res) => {
-    ok(res, await trafficReport(req.query as unknown as TrafficQuery));
-  }),
+  controller.ask,
 );
 
 /* — analytics — */
-adminRouter.get(
-  '/stats/overview',
-  asyncHandler(async (_req, res) => {
-    ok(res, await statsService.overview());
-  }),
-);
-
-adminRouter.get(
-  '/stats/timeseries',
-  validate({ query: timeseriesSchema }),
-  asyncHandler(async (req, res) => {
-    const { days } = req.query as unknown as { days: number };
-    ok(res, await statsService.timeseries(days));
-  }),
-);
-
-adminRouter.get(
-  '/stats/top-masters',
-  asyncHandler(async (_req, res) => {
-    ok(res, await statsService.topMasters(10));
-  }),
-);
-
-adminRouter.get('/system', (_req, res) => {
-  ok(res, statsService.systemInfo());
-});
+adminRouter.get('/stats/traffic', validate({ query: trafficQuerySchema }), traffic.report);
+adminRouter.get('/stats/overview', controller.overview);
+adminRouter.get('/stats/timeseries', validate({ query: timeseriesSchema }), controller.timeseries);
+adminRouter.get('/stats/top-masters', controller.topMasters);
+adminRouter.get('/system', controller.system);
 
 /* — users — */
-adminRouter.get(
-  '/users',
-  validate({ query: listUsersSchema }),
-  asyncHandler(async (req, res) => {
-    ok(res, await adminService.listUsers(req.query as unknown as ListUsersInput));
-  }),
-);
-
-adminRouter.get(
-  '/users/:id',
-  validate({ params: idParamSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    ok(res, await adminService.getUser(id(req)));
-  }),
-);
-
+adminRouter.get('/users', validate({ query: listUsersSchema }), controller.listUsers);
+adminRouter.get('/users/:id', byId, controller.getUser);
 adminRouter.patch(
   '/users/:id/status',
   validate({ params: idParamSchema, body: updateUserStatusSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    ok(
-      res,
-      await adminService.updateUserStatus(req.user.id, id(req), req.body as UpdateUserStatusInput),
-    );
-  }),
+  controller.updateUserStatus,
 );
-
 adminRouter.post(
   '/users/:id/balance',
   validate({ params: idParamSchema, body: adjustBalanceSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    ok(res, await adminService.adjustBalance(req.user.id, id(req), req.body as AdjustBalanceInput));
-  }),
+  controller.adjustBalance,
 );
-
-adminRouter.post(
-  '/users/:id/revoke-sessions',
-  validate({ params: idParamSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    await adminService.revokeSessions(req.user.id, id(req));
-    ok(res, { revoked: true });
-  }),
-);
-
+adminRouter.post('/users/:id/revoke-sessions', byId, controller.revokeSessions);
 adminRouter.post(
   '/users/:id/password',
   validate({ params: idParamSchema, body: resetPasswordSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    await adminService.resetPassword(req.user.id, id(req), req.body as ResetPasswordInput);
-    ok(res, { reset: true });
-  }),
+  controller.resetPassword,
 );
 
 /* — jobs ("e'lonlar") — */
-adminRouter.get(
-  '/orders',
-  validate({ query: listOrdersSchema }),
-  asyncHandler(async (req, res) => {
-    ok(res, await adminService.listOrders(req.query as unknown as ListOrdersInput));
-  }),
-);
-
-adminRouter.get(
-  '/orders/:id',
-  validate({ params: idParamSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    ok(res, await adminService.getOrder(id(req)));
-  }),
-);
-
+adminRouter.get('/orders', validate({ query: listOrdersSchema }), controller.listOrders);
+adminRouter.get('/orders/:id', byId, controller.getOrder);
 adminRouter.post(
   '/orders/:id/cancel',
   validate({ params: idParamSchema, body: adminCancelOrderSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    ok(
-      res,
-      await adminService.cancelOrder(req.user.id, id(req), req.body as AdminCancelOrderInput),
-    );
-  }),
+  controller.cancelOrder,
 );
 
 /* — chats — */
-adminRouter.get(
-  '/chats',
-  validate({ query: listChatsSchema }),
-  asyncHandler(async (req, res) => {
-    ok(res, await adminService.listChats(req.query as unknown as ListChatsInput));
-  }),
-);
-
-adminRouter.get(
-  '/chats/:id',
-  validate({ params: idParamSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    ok(res, await adminService.getChat(id(req)));
-  }),
-);
-
+adminRouter.get('/chats', validate({ query: listChatsSchema }), controller.listChats);
+adminRouter.get('/chats/:id', byId, controller.getChat);
 adminRouter.get(
   '/chats/:id/messages',
   validate({ params: idParamSchema, query: messagesSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    const { page, limit } = req.query as unknown as { page: number; limit: number };
-    ok(res, await adminService.listMessages(id(req), page, limit));
-  }),
+  controller.listMessages,
 );
-
 adminRouter.patch(
   '/chats/:id',
   validate({ params: idParamSchema, body: updateChatSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    const { isClosed } = req.body as { isClosed: boolean };
-    ok(res, await adminService.setChatClosed(req.user.id, id(req), isClosed));
-  }),
+  controller.updateChat,
 );
-
-adminRouter.delete(
-  '/messages/:id',
-  validate({ params: idParamSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    await adminService.deleteMessage(req.user.id, id(req));
-    noContent(res);
-  }),
-);
+adminRouter.delete('/messages/:id', byId, controller.deleteMessage);
 
 /* — products — */
-adminRouter.get(
-  '/products',
-  validate({ query: listProductsSchema }),
-  asyncHandler(async (req, res) => {
-    ok(res, await adminService.listProducts(req.query as unknown as ListProductsInput));
-  }),
-);
-
+adminRouter.get('/products', validate({ query: listProductsSchema }), controller.listProducts);
 adminRouter.patch(
   '/products/:id',
   validate({ params: idParamSchema, body: updateProductSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    const { isActive } = req.body as { isActive: boolean };
-    ok(res, await adminService.setProductActive(req.user.id, id(req), isActive));
-  }),
+  controller.updateProduct,
 );
 
 /* — reviews — */
-adminRouter.get(
-  '/reviews',
-  validate({ query: listReviewsSchema }),
-  asyncHandler(async (req, res) => {
-    ok(res, await adminService.listReviews(req.query as unknown as ListReviewsInput));
-  }),
-);
-
+adminRouter.get('/reviews', validate({ query: listReviewsSchema }), controller.listReviews);
 adminRouter.patch(
   '/reviews/:id',
   validate({ params: idParamSchema, body: updateReviewSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    const { isVisible } = req.body as { isVisible: boolean };
-    ok(res, await adminService.setReviewVisible(req.user.id, id(req), isVisible));
-  }),
+  controller.updateReview,
 );
 
 /* — money — */
 adminRouter.get(
   '/transactions',
   validate({ query: listTransactionsSchema }),
-  asyncHandler(async (req, res) => {
-    ok(res, await adminService.listTransactions(req.query as unknown as ListTransactionsInput));
-  }),
+  controller.listTransactions,
 );
 
 /* — manual top-ups ("To'lovlar") — */
-adminRouter.get(
-  '/payments',
-  validate({ query: listPaymentsSchema }),
-  asyncHandler(async (req, res) => {
-    ok(res, await paymentsService.listPayments(req.query as unknown as ListPaymentsInput));
-  }),
-);
-
-adminRouter.get(
-  '/payments/pending-count',
-  asyncHandler(async (_req, res) => {
-    ok(res, await paymentsService.pendingCount());
-  }),
-);
-
+adminRouter.get('/payments', validate({ query: listPaymentsSchema }), controller.listPayments);
+adminRouter.get('/payments/pending-count', controller.pendingPayments);
 adminRouter.post(
   '/payments/:id/approve',
   validate({ params: idParamSchema, body: approvePaymentSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    ok(
-      res,
-      await paymentsService.approvePayment(req.user.id, id(req), req.body as ApprovePaymentInput),
-    );
-  }),
+  controller.approvePayment,
 );
-
 adminRouter.post(
   '/payments/:id/reject',
   validate({ params: idParamSchema, body: rejectPaymentSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    ok(
-      res,
-      await paymentsService.rejectPayment(req.user.id, id(req), req.body as RejectPaymentInput),
-    );
-  }),
+  controller.rejectPayment,
 );
 
 /* — broadcasts and the journal — */
-adminRouter.get(
-  '/broadcasts/:id',
-  validate({ params: idParamSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    ok(res, await getBroadcast(id(req)));
-  }),
-);
-adminRouter.post(
-  '/broadcasts',
-  validate({ body: broadcastSchema }),
-  asyncHandler<AdminRequest>(async (req, res) => {
-    ok(res, await adminService.broadcast(req.user.id, req.body as BroadcastInput));
-  }),
-);
-
-adminRouter.get(
-  '/logs',
-  validate({ query: listLogsSchema }),
-  asyncHandler(async (req, res) => {
-    ok(res, await adminService.listLogs(req.query as unknown as ListLogsInput));
-  }),
-);
+adminRouter.get('/broadcasts/:id', byId, controller.getBroadcastById);
+adminRouter.post('/broadcasts', validate({ body: broadcastSchema }), controller.broadcast);
+adminRouter.get('/logs', validate({ query: listLogsSchema }), controller.listLogs);
