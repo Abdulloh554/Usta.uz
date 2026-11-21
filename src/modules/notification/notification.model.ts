@@ -48,4 +48,7 @@ notificationSchema.index({ user: 1, isRead: 1, createdAt: -1 });
 /** The feed only ever shows recent history; drop anything older than 90 days. */
 notificationSchema.index({ createdAt: 1 }, { expireAfterSeconds: 90 * 24 * 60 * 60 });
 
-export const Notification = model<INotification, NotificationModel>('Notification', notificationSchema);
+export const Notification = model<INotification, NotificationModel>(
+  'Notification',
+  notificationSchema,
+);

@@ -1,56 +1,24 @@
 import { Router } from 'express';
-import { z } from 'zod';
 import { authenticate, authorize } from '../../common/middlewares/auth.middleware';
 import { idParamSchema, validate } from '../../common/middlewares/validate.middleware';
-import { asyncHandler, ok } from '../../common/utils/http';
-import { httpsUrl } from '../../common/utils/url';
-import { Craft, Language, UserRole, type AuthenticatedRequest } from '../../common/types';
-import * as userService from './user.service';
-
-const updateProfileSchema = z.object({
-  firstName: z.string().trim().min(2).max(50).optional(),
-  lastName: z.string().trim().min(2).max(50).optional(),
-  language: z.nativeEnum(Language).optional(),
-  // `.url()` alone also passes `javascript:` links.
-  avatarUrl: httpsUrl().optional(),
-});
-
-const updateMasterSchema = z.object({
-  crafts: z
-    .array(z.nativeEnum(Craft))
-    .min(1)
-    .max(12)
-    .refine((crafts) => new Set(crafts).size === crafts.length, 'Each trade can be picked once')
-    .optional(),
-  about: z.string().trim().max(1000).optional(),
-  regions: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
-  location: z.tuple([z.number().min(-180).max(180), z.number().min(-90).max(90)]).optional(),
-  isAvailable: z.boolean().optional(),
-});
-
-const topMastersSchema = z.object({
-  limit: z.coerce.number().int().min(1).max(20).default(5),
-  craft: z.nativeEnum(Craft).optional(),
-});
+import { UserRole } from '../../common/types';
+import * as controller from './user.controller';
+import {
+  deleteAccountSchema,
+  topMastersSchema,
+  updateMasterSchema,
+  updateProfileSchema,
+} from './user.validator';
 
 export const userRouter = Router();
 
-userRouter.get(
-  '/top-masters',
-  validate({ query: topMastersSchema }),
-  asyncHandler(async (req, res) => {
-    const { limit, craft } = req.query as unknown as { limit: number; craft?: Craft };
-    ok(res, await userService.topMasters(limit, craft));
-  }),
-);
+userRouter.get('/top-masters', validate({ query: topMastersSchema }), controller.topMasters);
 
 userRouter.patch(
   '/me',
   authenticate,
   validate({ body: updateProfileSchema }),
-  asyncHandler<AuthenticatedRequest>(async (req, res) => {
-    ok(res, await userService.updateProfile(req.user.id, req.body as userService.UpdateProfileInput));
-  }),
+  controller.updateProfile,
 );
 
 userRouter.patch(
@@ -58,61 +26,27 @@ userRouter.patch(
   authenticate,
   authorize(UserRole.MASTER),
   validate({ body: updateMasterSchema }),
-  asyncHandler<AuthenticatedRequest>(async (req, res) => {
-    ok(
-      res,
-      await userService.updateMasterProfile(
-        req.user.id,
-        req.body as userService.UpdateMasterProfileInput,
-      ),
-    );
-  }),
+  controller.updateMasterProfile,
 );
 
 /**
  * Google Play requires an in-app route to account deletion for any app that
- * lets people create one. The password re-check is what stops a borrowed,
- * unlocked phone from wiping someone's account. Accounts that sign in with a
- * mailed code have no password, so a code mailed to them is accepted instead.
+ * lets people create one. The password (or mailed code) re-check is what stops
+ * a borrowed, unlocked phone from wiping someone's account.
  */
 userRouter.delete(
   '/me',
   authenticate,
-  validate({
-    body: z
-      .object({
-        password: z.string().min(1).optional(),
-        code: z.string().regex(/^\d{6}$/, 'The code is six digits').optional(),
-      })
-      .refine((body) => body.password || body.code, 'Password or code is required'),
-  }),
-  asyncHandler<AuthenticatedRequest>(async (req, res) => {
-    await userService.deleteAccount(req.user.id, req.body as { password?: string; code?: string });
-    ok(res, { deleted: true });
-  }),
+  validate({ body: deleteAccountSchema }),
+  controller.deleteAccount,
 );
 
-userRouter.get(
-  '/me/history',
-  authenticate,
-  authorize(UserRole.MASTER),
-  asyncHandler<AuthenticatedRequest>(async (req, res) => {
-    ok(res, await userService.workHistory(req.user.id));
-  }),
-);
+userRouter.get('/me/history', authenticate, authorize(UserRole.MASTER), controller.myHistory);
 
-userRouter.get(
-  '/masters/:id',
-  validate({ params: idParamSchema }),
-  asyncHandler(async (req, res) => {
-    ok(res, await userService.getMasterProfile(req.params.id as string));
-  }),
-);
+userRouter.get('/masters/:id', validate({ params: idParamSchema }), controller.masterProfile);
 
 userRouter.get(
   '/masters/:id/history',
   validate({ params: idParamSchema }),
-  asyncHandler(async (req, res) => {
-    ok(res, await userService.workHistory(req.params.id as string));
-  }),
+  controller.masterHistory,
 );

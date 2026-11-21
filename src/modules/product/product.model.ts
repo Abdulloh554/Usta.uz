@@ -29,7 +29,13 @@ export type ProductModel = Model<IProduct>;
 const productSchema = new Schema<IProduct, ProductModel>(
   {
     seller: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    title: { type: String, required: [true, 'Product name is required'], trim: true, minlength: 2, maxlength: 140 },
+    title: {
+      type: String,
+      required: [true, 'Product name is required'],
+      trim: true,
+      minlength: 2,
+      maxlength: 140,
+    },
     description: { type: String, trim: true, maxlength: 2000, default: '' },
     price: {
       type: Number,

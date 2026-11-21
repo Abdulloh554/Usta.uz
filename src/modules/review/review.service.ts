@@ -43,7 +43,10 @@ export type RateMasterInput = {
 };
 
 /** The client rates the pro once the job is marked complete. */
-export const rateMaster = async (clientId: string, input: RateMasterInput): Promise<ReviewDocument> => {
+export const rateMaster = async (
+  clientId: string,
+  input: RateMasterInput,
+): Promise<ReviewDocument> => {
   const order = await Order.findById(input.orderId);
   if (!order) throw new NotFoundError('Order');
 
@@ -166,15 +169,25 @@ const listFor = async (
   );
 };
 
-export const listForMaster = (masterId: string, page: number, limit: number): Promise<Paginated<IReview>> =>
-  listFor(ReviewTarget.MASTER, masterId, page, limit);
+export const listForMaster = (
+  masterId: string,
+  page: number,
+  limit: number,
+): Promise<Paginated<IReview>> => listFor(ReviewTarget.MASTER, masterId, page, limit);
 
-export const listForProduct = (productId: string, page: number, limit: number): Promise<Paginated<IReview>> =>
-  listFor(ReviewTarget.PRODUCT, productId, page, limit);
+export const listForProduct = (
+  productId: string,
+  page: number,
+  limit: number,
+): Promise<Paginated<IReview>> => listFor(ReviewTarget.PRODUCT, productId, page, limit);
 
 /** Moderation: hiding a bought rating pulls it straight out of the average. */
 export const hideReview = async (reviewId: string): Promise<void> => {
-  const review = await Review.findByIdAndUpdate(reviewId, { $set: { isVisible: false } }, { new: true });
+  const review = await Review.findByIdAndUpdate(
+    reviewId,
+    { $set: { isVisible: false } },
+    { new: true },
+  );
   if (!review) throw new NotFoundError('Review');
   await recomputeRating(review.targetType, review.target);
 };

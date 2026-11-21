@@ -223,7 +223,7 @@ export const startTopUp = async (userId: string, input: TopUpInput): Promise<Top
     description: 'Wallet top-up',
   });
 
-  const transactionId = (transaction._id).toString();
+  const transactionId = transaction._id.toString();
   const checkoutUrl =
     input.provider === PaymentProvider.PAYME
       ? buildPaymeUrl(transactionId, input.amount)

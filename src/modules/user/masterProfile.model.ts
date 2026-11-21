@@ -35,7 +35,11 @@ export type MasterProfileDocument = HydratedDocument<
   IMasterProfile,
   IMasterProfileMethods & { id?: string }
 >;
-export type MasterProfileModel = Model<IMasterProfile, Record<string, never>, IMasterProfileMethods>;
+export type MasterProfileModel = Model<
+  IMasterProfile,
+  Record<string, never>,
+  IMasterProfileMethods
+>;
 
 const masterProfileSchema = new Schema<IMasterProfile, MasterProfileModel, IMasterProfileMethods>(
   {

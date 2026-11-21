@@ -1,185 +1,84 @@
 import { Router } from 'express';
-import { z } from 'zod';
 import {
   authenticate,
   authorize,
   optionalAuthenticate,
 } from '../../common/middlewares/auth.middleware';
+import { idParamSchema, validate } from '../../common/middlewares/validate.middleware';
+import { UserRole } from '../../common/types';
+import * as controller from './product.controller';
 import {
-  idParamSchema,
-  paginationSchema,
-  validate,
-} from '../../common/middlewares/validate.middleware';
-import { asyncHandler, created, noContent, ok } from '../../common/utils/http';
-import { httpsUrl } from '../../common/utils/url';
-import { UserRole, type AuthenticatedRequest } from '../../common/types';
-import * as productService from './product.service';
-import * as purchases from './purchase.service';
-
-const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Must be a hex colour');
-
-/**
- * Accepts `12000` or `"12000"` from a form, but not the values `z.coerce` would
- * quietly turn into a number — `""` and `null` became 0, `true` became 1.
- */
-const wholeNumber = (max: number) =>
-  z.preprocess(
-    (value) => (typeof value === 'string' && value.trim() !== '' ? Number(value) : value),
-    z.number().int().nonnegative().max(max),
-  );
-
-/** `z.string().url()` also passes `javascript:` links, which must never reach an `<img>`. */
-const webUrl = httpsUrl();
-
-const productBodySchema = z.object({
-  title: z.string().trim().min(2).max(140),
-  description: z.string().trim().max(2000).optional(),
-  price: wholeNumber(1_000_000_000),
-  images: z.array(webUrl).max(8).optional(),
-  category: z.string().trim().max(60).optional(),
-  stock: wholeNumber(1_000_000).optional(),
-  gradient: z.object({ from: hexColor, to: hexColor }).optional(),
-});
-
-const listQuerySchema = paginationSchema.extend({
-  search: z.string().trim().max(120).optional(),
-  category: z.string().trim().max(60).optional(),
-  seller: z
-    .string()
-    .regex(/^[0-9a-fA-F]{24}$/)
-    .optional(),
-});
+  listProductsSchema,
+  productBodySchema,
+  productUpdateSchema,
+  purchaseListSchema,
+  purchaseSchema,
+  purchaseStatusSchema,
+} from './product.validator';
 
 export const productRouter = Router();
 
+/* — purchases — */
 productRouter.get(
   '/purchases',
   authenticate,
   authorize(UserRole.CLIENT, UserRole.MASTER, UserRole.SELLER),
-  validate({ query: purchases.purchaseListSchema }),
-  asyncHandler<AuthenticatedRequest>(async (req, res) => {
-    const { page, limit } = req.query as unknown as { page: number; limit: number };
-    ok(res, await purchases.listPurchases(req.user.id, req.user.role, page, limit));
-  }),
+  validate({ query: purchaseListSchema }),
+  controller.listPurchases,
 );
 productRouter.post(
   '/:id/purchase',
   authenticate,
   authorize(UserRole.CLIENT, UserRole.MASTER),
-  validate({ params: idParamSchema, body: purchases.purchaseSchema }),
-  asyncHandler<AuthenticatedRequest>(async (req, res) => {
-    created(
-      res,
-      await purchases.createPurchase(
-        req.user.id,
-        req.params.id as string,
-        req.body as z.infer<typeof purchases.purchaseSchema>,
-      ),
-    );
-  }),
+  validate({ params: idParamSchema, body: purchaseSchema }),
+  controller.createPurchase,
 );
 productRouter.patch(
   '/purchases/:id',
   authenticate,
   authorize(UserRole.CLIENT, UserRole.MASTER, UserRole.SELLER),
-  validate({ params: idParamSchema, body: purchases.purchaseStatusSchema }),
-  asyncHandler<AuthenticatedRequest>(async (req, res) => {
-    const { status } = req.body as z.infer<typeof purchases.purchaseStatusSchema>;
-    ok(res, await purchases.updatePurchase(req.user.id, req.params.id as string, status));
-  }),
+  validate({ params: idParamSchema, body: purchaseStatusSchema }),
+  controller.updatePurchase,
 );
 
-/* — seller-owned routes, before `/:id` so they are not read as ids — */
-productRouter.get(
-  '/mine',
-  authenticate,
-  authorize(UserRole.SELLER),
-  asyncHandler<AuthenticatedRequest>(async (req, res) => {
-    ok(res, await productService.listForSeller(req.user.id));
-  }),
-);
+/* — seller-owned and personal routes, before `/:id` so they are not read as ids — */
+productRouter.get('/mine', authenticate, authorize(UserRole.SELLER), controller.mine);
+productRouter.get('/favorites', authenticate, controller.favorites);
 
-productRouter.get(
-  '/favorites',
-  authenticate,
-  asyncHandler<AuthenticatedRequest>(async (req, res) => {
-    ok(res, await productService.listFavorites(req.user.id));
-  }),
-);
-
+/* — catalogue — */
 productRouter.get(
   '/',
   optionalAuthenticate,
-  validate({ query: listQuerySchema }),
-  asyncHandler(async (req, res) => {
-    const query = req.query as unknown as {
-      page: number;
-      limit: number;
-      search?: string;
-      category?: string;
-      seller?: string;
-    };
-    const result = await productService.listProducts(query);
-    // Signed-in shoppers get their saved set back with the page, so the heart
-    // icons render correctly on first paint.
-    const favorites = req.user ? await productService.favoriteIds(req.user.id) : [];
-    ok(res, { ...result, favorites });
-  }),
+  validate({ query: listProductsSchema }),
+  controller.list,
 );
-
-productRouter.get(
-  '/:id',
-  validate({ params: idParamSchema }),
-  asyncHandler(async (req, res) => {
-    ok(res, await productService.getProduct(req.params.id as string));
-  }),
-);
+productRouter.get('/:id', validate({ params: idParamSchema }), controller.detail);
 
 productRouter.post(
   '/',
   authenticate,
   authorize(UserRole.SELLER),
   validate({ body: productBodySchema }),
-  asyncHandler<AuthenticatedRequest>(async (req, res) => {
-    const product = await productService.createProduct(
-      req.user.id,
-      req.body as productService.CreateProductInput,
-    );
-    created(res, product);
-  }),
+  controller.create,
 );
-
 productRouter.patch(
   '/:id',
   authenticate,
   authorize(UserRole.SELLER),
-  validate({ params: idParamSchema, body: productBodySchema.partial() }),
-  asyncHandler<AuthenticatedRequest>(async (req, res) => {
-    const product = await productService.updateProduct(
-      req.params.id as string,
-      req.user.id,
-      req.body as Partial<productService.CreateProductInput>,
-    );
-    ok(res, product);
-  }),
+  validate({ params: idParamSchema, body: productUpdateSchema }),
+  controller.update,
 );
-
 productRouter.delete(
   '/:id',
   authenticate,
   authorize(UserRole.SELLER),
   validate({ params: idParamSchema }),
-  asyncHandler<AuthenticatedRequest>(async (req, res) => {
-    await productService.deleteProduct(req.params.id as string, req.user.id);
-    noContent(res);
-  }),
+  controller.remove,
 );
 
 productRouter.post(
   '/:id/favorite',
   authenticate,
   validate({ params: idParamSchema }),
-  asyncHandler<AuthenticatedRequest>(async (req, res) => {
-    ok(res, await productService.toggleFavorite(req.user.id, req.params.id as string));
-  }),
+  controller.toggleFavorite,
 );

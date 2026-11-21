@@ -51,8 +51,14 @@ const COPY: Record<NotificationType, Record<Language, { title: string; body: str
     en: { title: 'Wallet topped up', body: 'Your balance has been credited.' },
   },
   [NotificationType.WALLET_TOP_UP_REJECTED]: {
-    uz: { title: 'To‘ldirish so‘rovi rad etildi', body: 'Hisobni to‘ldirish so‘rovingiz rad etildi.' },
-    ru: { title: 'Запрос на пополнение отклонён', body: 'Ваш запрос на пополнение счёта отклонён.' },
+    uz: {
+      title: 'To‘ldirish so‘rovi rad etildi',
+      body: 'Hisobni to‘ldirish so‘rovingiz rad etildi.',
+    },
+    ru: {
+      title: 'Запрос на пополнение отклонён',
+      body: 'Ваш запрос на пополнение счёта отклонён.',
+    },
     en: { title: 'Top-up request rejected', body: 'Your wallet top-up request was rejected.' },
   },
   // Broadcasts always carry their own title and body; this is only the fallback.
@@ -117,7 +123,7 @@ export const notify = async (input: NotifyInput): Promise<NotificationDocument> 
       }
 
       await getNotificationQueue().add(NotificationJob.PUSH, {
-        notificationId: (notification._id).toString(),
+        notificationId: notification._id.toString(),
         tokens: user.pushTokens,
         title: notification.title,
         body: notification.body,
@@ -176,7 +182,10 @@ export const markAllRead = async (userId: string): Promise<void> => {
  * again would only fail again.
  */
 setStaleTokenHandler(async (tokens) => {
-  await User.updateMany({ pushTokens: { $in: tokens } }, { $pull: { pushTokens: { $in: tokens } } });
+  await User.updateMany(
+    { pushTokens: { $in: tokens } },
+    { $pull: { pushTokens: { $in: tokens } } },
+  );
   logger.info('Dropped stale push subscriptions', { count: tokens.length });
 });
 

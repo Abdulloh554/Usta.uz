@@ -14,7 +14,10 @@ export type CreateProductInput = {
   gradient?: { from: string; to: string };
 };
 
-export const createProduct = (sellerId: string, input: CreateProductInput): Promise<ProductDocument> =>
+export const createProduct = (
+  sellerId: string,
+  input: CreateProductInput,
+): Promise<ProductDocument> =>
   Product.create({
     seller: new mongoose.Types.ObjectId(sellerId),
     title: input.title,
@@ -90,7 +93,10 @@ export const listProducts = async (input: ListProductsInput): Promise<Paginated<
 };
 
 export const getProduct = async (productId: string): Promise<ProductDocument> => {
-  const product = await Product.findById(productId).populate('seller', 'firstName lastName avatarUrl');
+  const product = await Product.findById(productId).populate(
+    'seller',
+    'firstName lastName avatarUrl',
+  );
   if (!product || !product.isActive) throw new NotFoundError('Product');
   return product;
 };
@@ -132,13 +138,18 @@ export const listFavorites = async (userId: string): Promise<IProduct[]> => {
     })
     .lean();
 
-  return withId(favorites.map((favorite) => favorite.product).filter((product) => product?.isActive));
+  return withId(
+    favorites.map((favorite) => favorite.product).filter((product) => product?.isActive),
+  );
 };
 
 /** Only products still on sale — a removed one must not light a heart or count as saved. */
 export const favoriteIds = async (userId: string): Promise<string[]> => {
   const favorites = await Favorite.find({ user: userId })
-    .populate<{ product: Pick<IProduct, '_id' | 'isActive'> | null }>({ path: 'product', select: 'isActive' })
+    .populate<{ product: Pick<IProduct, '_id' | 'isActive'> | null }>({
+      path: 'product',
+      select: 'isActive',
+    })
     .lean();
   return favorites
     .filter((favorite) => favorite.product?.isActive)

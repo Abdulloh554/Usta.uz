@@ -286,7 +286,8 @@ export const deleteAccount = async (
 
   if (proof.code) {
     // Code-only accounts have no password: the mailed code is the re-check.
-    if (!user.email) throw new UnauthorizedError('The code is wrong or has expired', 'INVALID_CODE');
+    if (!user.email)
+      throw new UnauthorizedError('The code is wrong or has expired', 'INVALID_CODE');
     await consumeOtp('delete', user.email, proof.code);
   } else if (!proof.password || !(await user.comparePassword(proof.password))) {
     throw new UnauthorizedError('The password is incorrect', 'INVALID_CREDENTIALS');

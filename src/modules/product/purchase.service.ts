@@ -1,31 +1,13 @@
 import mongoose from 'mongoose';
-import { z } from 'zod';
 import { ConflictError, ForbiddenError, NotFoundError } from '../../common/errors/ApiError';
-import { paginationSchema } from '../../common/middlewares/validate.middleware';
-import { normalizePhone, isValidUzPhone } from '../../common/utils/phone';
 import { paginate } from '../../common/utils/http';
 import { UserRole } from '../../common/types';
 import { Product } from './product.model';
 import { Purchase, type PurchaseStatus } from './purchase.model';
 import { User } from '../user/user.model';
+import type { PurchaseInput } from './product.validator';
 
-export const purchaseSchema = z.object({
-  requestId: z
-    .string()
-    .min(16)
-    .max(100)
-    .regex(/^[a-zA-Z0-9-]+$/),
-  quantity: z.number().int().min(1).max(1000),
-  phone: z.string().refine(isValidUzPhone).transform(normalizePhone),
-  address: z.string().trim().min(5).max(300),
-});
-export const purchaseListSchema = paginationSchema;
-export const purchaseStatusSchema = z.object({
-  status: z.enum(['accepted', 'completed', 'cancelled']),
-});
-type Input = z.infer<typeof purchaseSchema>;
-
-export async function createPurchase(buyerId: string, productId: string, input: Input) {
+export async function createPurchase(buyerId: string, productId: string, input: PurchaseInput) {
   const previous = await Purchase.findOne({ buyer: buyerId, requestId: input.requestId });
   if (previous) {
     if (
