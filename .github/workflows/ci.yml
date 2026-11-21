@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A new push to the same branch makes the previous run irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        # The suite spins up its own in-memory MongoDB replica set and stubs
+        # Redis, so no services are needed here.
+        run: npm run test:cov
+        env:
+          NODE_ENV: test
+          MONGO_URI: mongodb://127.0.0.1:27017/ustauz-test
+          REDIS_URL: redis://127.0.0.1:6379
+          JWT_ACCESS_SECRET: ci-access-secret-that-is-long-enough-32
+          JWT_REFRESH_SECRET: ci-refresh-secret-that-is-long-enough-32
+          BCRYPT_ROUNDS: '4'
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage
+          retention-days: 7
+
+      - name: Build
+        run: npm run build
