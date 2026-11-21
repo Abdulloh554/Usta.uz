@@ -2,7 +2,7 @@
 import path from 'node:path';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
-import { backupDatabase } from '../src/maintenance/backup';
+import { backupDatabase, pruneBackups } from '../src/maintenance/backup';
 
 /**
  * Copies the whole database to a local folder. Read-only: it never writes to
@@ -10,6 +10,7 @@ import { backupDatabase } from '../src/maintenance/backup';
  *
  *   npm run db:backup                    # → backups/ustauz-2026-11-21T15-04-05Z/
  *   npm run db:backup -- --out D:/safe   # → D:/safe/ustauz-2026-…/
+ *   npm run db:backup -- --keep 14       # then delete all but the newest 14
  *
  * Connects with MONGO_URI from server/.env (or the environment). The folder
  * holds every user's personal data in the clear: keep it off GitHub (backups/
@@ -52,6 +53,14 @@ const main = async (): Promise<void> => {
       console.log(`  ${entry.name.padEnd(24)} ${String(entry.count).padStart(8)} documents`);
     }
     console.log(`Done: ${manifest.collections.length} collections, ${total} documents.`);
+
+    // Pruning runs only after this backup is complete, so the newest copy is
+    // always the one just written.
+    const keep = argValue('--keep');
+    if (keep !== undefined) {
+      const removed = pruneBackups(root, db.databaseName, Number(keep));
+      console.log(`Kept the newest ${keep}; removed ${removed.length} older backup(s).`);
+    }
   } finally {
     await client.close();
   }

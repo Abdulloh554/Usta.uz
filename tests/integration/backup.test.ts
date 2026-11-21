@@ -2,7 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import mongoose from 'mongoose';
-import { backupDatabase, restoreDatabase, verifyBackup } from '../../src/maintenance/backup';
+import {
+  backupDatabase,
+  pruneBackups,
+  restoreDatabase,
+  verifyBackup,
+} from '../../src/maintenance/backup';
 import { makeClient, makeMaster, makeOrder, makeSeller } from '../helpers/factories';
 import { Order } from '../../src/modules/order/order.model';
 import { Product } from '../../src/modules/product/product.model';
@@ -137,5 +142,27 @@ describe('database backup and restore', () => {
   it('refuses to write a backup over an existing folder', async () => {
     fs.mkdirSync(path.join(tmp, 'b'));
     await expect(backupDatabase(source(), path.join(tmp, 'b'))).rejects.toThrow(/existing folder/);
+  });
+
+  it('keeps only the newest backups and never touches anything else', async () => {
+    const db = source().databaseName;
+    const names = ['2026-11-01T22-00-00Z', '2026-11-02T22-00-00Z', '2026-11-03T22-00-00Z'].map(
+      (stamp) => `${db}-${stamp}`,
+    );
+    for (const name of names) {
+      // eslint-disable-next-line no-await-in-loop
+      await backupDatabase(source(), path.join(tmp, name));
+    }
+    // Look-alikes that must survive: no manifest, and another database.
+    fs.mkdirSync(path.join(tmp, `${db}-2026-10-01T22-00-00Z`));
+    fs.mkdirSync(path.join(tmp, 'notes'));
+
+    const removed = pruneBackups(tmp, db, 2);
+
+    expect(removed).toEqual([names[0]]);
+    expect(fs.readdirSync(tmp).sort()).toEqual(
+      [`${db}-2026-10-01T22-00-00Z`, names[1], names[2], 'notes'].sort(),
+    );
+    expect(() => pruneBackups(tmp, db, 0)).toThrow(/keep/);
   });
 });

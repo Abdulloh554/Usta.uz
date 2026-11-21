@@ -126,6 +126,39 @@ export const readManifest = (dir: string): BackupManifest => {
   return manifest;
 };
 
+/**
+ * Keeps the newest `keep` backups of `database` under `root` and deletes the
+ * rest. Only folders this tool wrote are touched: the name must be
+ * `<database>-<timestamp>` and the folder must hold a readable manifest of that
+ * database, so nothing else in the folder can be removed by mistake.
+ */
+export const pruneBackups = (root: string, database: string, keep: number): string[] => {
+  if (!Number.isInteger(keep) || keep < 1) throw new Error('keep must be a whole number ≥ 1');
+  if (!fs.existsSync(root)) return [];
+
+  const pattern = new RegExp(
+    `^${database.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-\\d{4}-\\d{2}-\\d{2}T[\\dZ-]+$`,
+  );
+  const backups = fs
+    .readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && pattern.test(entry.name))
+    .map((entry) => entry.name)
+    .filter((name) => {
+      try {
+        return readManifest(path.join(root, name)).database === database;
+      } catch {
+        return false;
+      }
+    })
+    // The timestamp in the name sorts chronologically as text.
+    .sort()
+    .reverse();
+
+  const removed = backups.slice(keep);
+  removed.forEach((name) => fs.rmSync(path.join(root, name), { recursive: true, force: true }));
+  return removed;
+};
+
 /** Checks every file against the checksum recorded when it was written. */
 export const verifyBackup = async (dir: string): Promise<BackupManifest> => {
   const manifest = readManifest(dir);
