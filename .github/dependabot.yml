@@ -1,0 +1,18 @@
+# Monthly dependency updates. Minor and patch bumps arrive as one grouped pull
+# request; majors come one per package, since each may need code changes.
+# Security fixes are opened as soon as an advisory is published, regardless.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
