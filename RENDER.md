@@ -22,8 +22,8 @@ be set; everything else falls back to a working value.
 
 ## The live service
 
-`Usta.uz` (`srv-daepchvqj5pc73adcj50`) runs on the Docker runtime in Oregon at
-<https://usta-uz.onrender.com>, backed by the free Key Value instance
+The `ustauz-api` service (see `render.yaml`) runs on the Docker runtime in Oregon at
+<https://ustauz-api.onrender.com>, backed by the free Key Value instance
 `ustauz-keyvalue` in the same region. `REDIS_URL` uses that instance's *internal*
 connection string, which needs no credentials because the traffic never leaves
 Render's private network:
