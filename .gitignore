@@ -4,3 +4,6 @@ coverage/
 .env
 *.log
 .mongo-data/
+
+# Database backups hold every user's personal data. Never commit them.
+backups/
