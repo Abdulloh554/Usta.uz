@@ -73,7 +73,9 @@ export const makeOrder = async (
   overrides: Partial<{ category: OrderCategory; status: OrderStatus; region: string }> = {},
 ): Promise<OrderDocument> =>
   Order.create({
-    code: `T${String(Date.now()).slice(-5)}${sequence++}`.slice(0, 6).toUpperCase(),
+    // The counter alone keeps codes unique within a run. The old form cut it off
+    // with `.slice(0, 6)`, so two orders made in the same millisecond collided.
+    code: `T${String(++sequence).padStart(5, '0')}`,
     client: clientId,
     title: 'Laptop will not turn on',
     description: 'No light even with the charger plugged in, Chilonzor district.',
