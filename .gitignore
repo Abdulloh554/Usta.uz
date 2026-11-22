@@ -7,3 +7,4 @@ coverage/
 
 # Database backups hold every user's personal data. Never commit them.
 backups/
+.env.bak
