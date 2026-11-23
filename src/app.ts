@@ -12,6 +12,7 @@ import { isShuttingDown } from './config/lifecycle';
 import { redis } from './config/redis';
 import { apiRouter } from './routes';
 import { errorHandler, notFoundHandler } from './common/middlewares/error.middleware';
+import { ForbiddenError } from './common/errors/ApiError';
 import { globalLimiter } from './common/middlewares/rateLimit.middleware';
 
 export const createApp = (): Express => {
@@ -41,7 +42,9 @@ export const createApp = (): Express => {
           callback(null, true);
           return;
         }
-        callback(new Error(`Origin ${origin} is not allowed`));
+        // A typed 403, so a stray origin is logged as a warning and answered
+        // as forbidden — a plain Error would surface as a 500.
+        callback(new ForbiddenError(`Origin ${origin} is not allowed`, 'CORS_ORIGIN_NOT_ALLOWED'));
       },
       credentials: true,
     }),
