@@ -102,6 +102,7 @@ export const Craft = {
   MECHANIC: 'mechanic',
   TAILOR: 'tailor',
   PHONE_REPAIR: 'phone_repair',
+  FACADE: 'facade',
 } as const;
 export type Craft = (typeof Craft)[keyof typeof Craft];
 
@@ -133,6 +134,7 @@ export const OrderCategory = {
   AUTO_REPAIR: 'auto_repair',
   TAILORING: 'tailoring',
   PHONE_REPAIR: 'phone_repair',
+  FACADE: 'facade',
 } as const;
 export type OrderCategory = (typeof OrderCategory)[keyof typeof OrderCategory];
 

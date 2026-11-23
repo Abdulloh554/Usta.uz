@@ -38,6 +38,7 @@ export const CATEGORY_CRAFTS: Readonly<Record<OrderCategory, readonly Craft[]>> 
   [OrderCategory.AUTO_REPAIR]: [Craft.MECHANIC],
   [OrderCategory.TAILORING]: [Craft.TAILOR],
   [OrderCategory.PHONE_REPAIR]: [Craft.PHONE_REPAIR],
+  [OrderCategory.FACADE]: [Craft.FACADE],
 });
 
 export type MatchCandidate = {
