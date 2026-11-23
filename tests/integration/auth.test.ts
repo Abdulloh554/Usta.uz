@@ -209,6 +209,59 @@ describe('auth routes', () => {
     });
   });
 
+  describe('POST /auth/register (phone and password)', () => {
+    const { email: _email, ...phonePayload } = clientPayload;
+    const withPassword = { ...phonePayload, password: 'secret123' };
+
+    it('creates an account with no email and no code, mailing nothing', async () => {
+      const send = jest.spyOn(mailProvider, 'send');
+      const response = await request(app).post(`${PREFIX}/auth/register`).send(withPassword);
+
+      expect(response.status).toBe(201);
+      expect(response.body.data.user.phone).toBe(clientPayload.phone);
+      expect(response.body.data.user.email).toBeUndefined();
+      expect(response.body.data.accessToken).toEqual(expect.any(String));
+      expect(send).not.toHaveBeenCalled();
+      send.mockRestore();
+    });
+
+    it('then signs in by phone and password, and stores only a hash', async () => {
+      await request(app).post(`${PREFIX}/auth/register`).send(withPassword);
+
+      const stored = await User.findOne({ phone: clientPayload.phone }).select('+passwordHash');
+      expect(stored?.passwordHash).toMatch(/^\$2[aby]\$/);
+
+      const login = await request(app)
+        .post(`${PREFIX}/auth/login`)
+        .send({ phone: clientPayload.phone, password: 'secret123' });
+      expect(login.status).toBe(200);
+    });
+
+    it('refuses a phone number that already has an account', async () => {
+      await request(app).post(`${PREFIX}/auth/register`).send(withPassword);
+      const response = await request(app).post(`${PREFIX}/auth/register`).send(withPassword);
+
+      expect(response.status).toBe(409);
+      expect(response.body.error.code).toBe('PHONE_TAKEN');
+    });
+
+    it('rejects a password shorter than six characters', async () => {
+      const response = await request(app)
+        .post(`${PREFIX}/auth/register`)
+        .send({ ...withPassword, password: '123' });
+
+      expect(response.status).toBe(422);
+      expect(await User.countDocuments()).toBe(0);
+    });
+
+    it('rejects a sign-up with neither a password nor a code', async () => {
+      const response = await request(app).post(`${PREFIX}/auth/register`).send(phonePayload);
+
+      expect(response.status).toBe(422);
+      expect(await User.countDocuments()).toBe(0);
+    });
+  });
+
   describe('POST /auth/login (emailed code)', () => {
     beforeEach(async () => {
       await signUp(app, clientPayload);

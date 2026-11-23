@@ -159,18 +159,18 @@ export const requestRegisterCode = async (input: RegisterRequestInput): Promise<
 };
 
 /**
- * Sign-up step two. The emailed code proves the address is theirs; the phone
- * number is checked by its operator code only - no SMS - which keeps the cost
- * of a failed sign-up at zero. There is no password: the account signs in with
- * a code mailed to the address, every time.
+ * Sign-up. Normally phone and password: the number is checked by its operator
+ * code only - no SMS - and nothing is mailed, so sign-up cannot fail on email
+ * delivery. The older path, email plus the code mailed by `requestRegisterCode`,
+ * is still accepted and creates a code-only account.
  */
 export const register = async (input: RegisterInput): Promise<AuthResult> => {
   const phone = normalizePhone(input.phone);
-  const email = normalizeEmail(input.email);
+  const email = input.email ? normalizeEmail(input.email) : undefined;
 
   const [phoneTaken, emailTaken] = await Promise.all([
     User.exists({ phone }),
-    User.exists({ email }),
+    email ? User.exists({ email }) : Promise.resolve(null),
   ]);
   if (emailTaken) {
     throw new ConflictError('An account with this email already exists', 'EMAIL_TAKEN');
@@ -179,11 +179,14 @@ export const register = async (input: RegisterInput): Promise<AuthResult> => {
     throw new ConflictError('An account with this phone number already exists', 'PHONE_TAKEN');
   }
 
-  await consumeOtp('register', email, input.code);
+  // A password makes the code unnecessary; without one, the code is the proof.
+  if (!input.password) await consumeOtp('register', email as string, input.code as string);
 
   const user = await User.create({
     phone,
-    email,
+    ...(email ? { email } : {}),
+    // Plaintext here; the model's save hook hashes it.
+    ...(input.password ? { passwordHash: input.password } : {}),
     firstName: input.firstName,
     lastName: input.lastName,
     role: input.role,
@@ -206,7 +209,7 @@ export const register = async (input: RegisterInput): Promise<AuthResult> => {
   logger.info('User registered', {
     userId: String(user._id),
     role: user.role,
-    email: maskEmail(email),
+    ...(email ? { email: maskEmail(email) } : {}),
   });
   return issueSession(user);
 };

@@ -28,14 +28,18 @@ const code = z.string().trim().regex(/^\d{6}$/, 'The code is six digits');
 /** Step one of sign-up: the address the code goes to, and the number to keep unique. */
 export const registerRequestSchema = z.object({ email, phone });
 
-/** Step two: the whole form plus the code that was emailed. No password anywhere. */
+/**
+ * The sign-up form. The web signs up with phone and password; the emailed-code
+ * path (email + code) is still accepted, for clients that use it.
+ */
 export const registerSchema = z
   .object({
     firstName: name,
     lastName: name,
-    email,
+    email: email.optional(),
     phone,
-    code,
+    password: password.optional(),
+    code: code.optional(),
     role: z.enum([UserRole.CLIENT, UserRole.MASTER, UserRole.SELLER]),
     language: z.nativeEnum(Language).default(Language.UZ),
     acceptedRules: z.literal(true, { error: 'You must accept the app rules' }),
@@ -49,6 +53,14 @@ export const registerSchema = z
     regions: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   })
   .superRefine((value, ctx) => {
+    if (!value.password && !(value.email && value.code)) {
+      // With an email, the form is on the code path and the code is what is missing.
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [value.email ? 'code' : 'password'],
+        message: value.email ? 'The code is required' : 'Password is required',
+      });
+    }
     if (value.role === UserRole.MASTER && (!value.crafts || value.crafts.length === 0)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
