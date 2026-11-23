@@ -51,9 +51,8 @@ export const buildCandidates = async (order: OrderDocument): Promise<MatchCandid
   const crafts = CATEGORY_CRAFTS[order.category];
   // Online state is checked after the lookup, so a pro who closed the app a few
   // minutes ago is still reachable — by push, which is the point of having it.
-  // A pro who has picked no trades is a candidate for every job.
   const baseMatch: Record<string, unknown> = {
-    $or: [{ crafts: { $in: crafts } }, { 'crafts.0': { $exists: false } }],
+    crafts: { $in: crafts },
     isAvailable: true,
   };
 
@@ -469,8 +468,7 @@ const assertClaimable = async (orderId: string, masterId: string): Promise<void>
   if (!profile) throw new NotFoundError('Master profile');
 
   const crafts: readonly Craft[] = CATEGORY_CRAFTS[order.category];
-  const picked = profile.crafts ?? [];
-  if (picked.length > 0 && !picked.some((craft) => crafts.includes(craft))) {
+  if (!profile.crafts.some((craft) => crafts.includes(craft))) {
     throw new ConflictError('This job is not in your trades', 'CRAFT_MISMATCH');
   }
 };

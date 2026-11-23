@@ -50,10 +50,13 @@ const masterProfileSchema = new Schema<IMasterProfile, MasterProfileModel, IMast
       unique: true,
       index: true,
     },
-    // Optional: a pro who has picked no trades sees and can take every job.
     crafts: {
       type: [{ type: String, enum: Object.values(Craft) }],
-      default: [],
+      required: true,
+      validate: {
+        validator: (value: Craft[]) => value.length > 0,
+        message: 'Pick at least one trade',
+      },
     },
     about: { type: String, trim: true, maxlength: 1000, default: '' },
     regions: { type: [String], default: [] },

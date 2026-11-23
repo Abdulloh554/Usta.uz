@@ -13,6 +13,7 @@ export const updateProfileSchema = z.object({
 export const updateMasterSchema = z.object({
   crafts: z
     .array(z.nativeEnum(Craft))
+    .min(1)
     .max(12)
     .refine((crafts) => new Set(crafts).size === crafts.length, 'Each trade can be picked once')
     .optional(),

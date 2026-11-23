@@ -174,13 +174,13 @@ describe('auth routes', () => {
       expect(profile!.crafts).toEqual([Craft.ELECTRICIAN, Craft.PLUMBER]);
     });
 
-    it('lets a pro sign up without picking a trade', async () => {
+    it('rejects a pro who picked no trade', async () => {
       const response = await signUp(app, { ...clientPayload, role: UserRole.MASTER, crafts: [] });
 
-      expect(response.status).toBe(201);
-      const profile = await MasterProfile.findOne({ user: response.body.data.user.id });
-      expect(profile).not.toBeNull();
-      expect(profile!.crafts).toEqual([]);
+      expect(response.status).toBe(422);
+      expect(response.body.error.details).toContainEqual(
+        expect.objectContaining({ field: 'crafts' }),
+      );
     });
 
     it('rejects a sign-up that does not accept the rules', async () => {
