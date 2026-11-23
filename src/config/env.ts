@@ -55,6 +55,15 @@ const schema = z.object({
   KEEP_ALIVE_TIMEOUT_MS: z.coerce.number().int().positive().default(65_000),
   /** 0 disables it. Caps a request that would otherwise hold a socket forever. */
   REQUEST_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(30_000),
+  /**
+   * Render's free plan puts the service to sleep after 15 minutes with no
+   * incoming request, and the next visitor then waits close to a minute. In
+   * production the server calls its own public `/health` this often, which
+   * counts as incoming traffic. The address defaults to the one Render sets;
+   * 0 minutes, or no address, turns it off.
+   */
+  SELF_PING_URL: z.string().default(process.env.RENDER_EXTERNAL_URL ?? ''),
+  SELF_PING_MINUTES: z.coerce.number().int().nonnegative().default(10),
 
   MONGO_URI: z.string().min(1),
   /**

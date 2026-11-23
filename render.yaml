@@ -33,6 +33,10 @@ services:
         value: /api/v1
       - key: LOG_LEVEL
         value: info
+      # The free plan sleeps after 15 idle minutes; the server pings its own
+      # /health (RENDER_EXTERNAL_URL, set by Render) this often. 0 turns it off.
+      - key: SELF_PING_MINUTES
+        value: '10'
 
       # Atlas connection string, with the database name and credentials.
       - key: MONGO_URI
