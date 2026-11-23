@@ -4,7 +4,7 @@ const base = new URL(process.env.BASE_URL || 'http://127.0.0.1:4000');
 if (!['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname) && process.env.ALLOW_STAGING !== 'yes') {
   throw new Error('For a verified isolated staging host, explicitly set ALLOW_STAGING=yes');
 }
-if (['usta-uz.onrender.com', 'ustamiz.uz', 'www.ustamiz.uz'].includes(base.hostname)) {
+if (['ustauz-api-production.up.railway.app', 'ustamiz.uz', 'www.ustamiz.uz'].includes(base.hostname)) {
   throw new Error('This script must not target the production marketplace');
 }
 const requests = Number(process.env.REQUESTS || 200);

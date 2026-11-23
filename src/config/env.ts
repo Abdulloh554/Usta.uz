@@ -55,16 +55,6 @@ const schema = z.object({
   KEEP_ALIVE_TIMEOUT_MS: z.coerce.number().int().positive().default(65_000),
   /** 0 disables it. Caps a request that would otherwise hold a socket forever. */
   REQUEST_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(30_000),
-  /**
-   * Render's free plan puts the service to sleep after 15 minutes with no
-   * incoming request, and the next visitor then waits close to a minute. In
-   * production the server calls its own public `/health` this often, which
-   * counts as incoming traffic. The address defaults to the one Render sets;
-   * 0 minutes, or no address, turns it off.
-   */
-  SELF_PING_URL: z.string().default(process.env.RENDER_EXTERNAL_URL ?? ''),
-  SELF_PING_MINUTES: z.coerce.number().int().nonnegative().default(10),
-
   MONGO_URI: z.string().min(1),
   /**
    * Each instance holds its own pool, so the ceiling across every replica has to
@@ -109,7 +99,7 @@ const schema = z.object({
    * with Eskiz). `console` logs the code instead of sending it — the dev/test default.
    */
   MAIL_PROVIDER: z.enum(['brevo', 'smtp', 'console']).default('console'),
-  /** HTTPS email API (Brevo): hosts such as Render's free tier block outbound SMTP ports. */
+  /** HTTPS email API (Brevo): Railway blocks outbound SMTP below the Pro plan. */
   BREVO_API_KEY: z.string().default(''),
   SMTP_HOST: z.string().default('smtp.gmail.com'),
   SMTP_PORT: z.coerce.number().int().positive().default(465),

@@ -1,5 +1,5 @@
 # Puts a new MongoDB Atlas password into server/.env and copies the full
-# MONGO_URI to the clipboard, ready to paste into Render (ustauz-api -> Environment).
+# MONGO_URI to the clipboard, ready to paste into Railway (ustauz-api -> Variables).
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\set-mongo-password.ps1
 #
@@ -34,4 +34,4 @@ $lines[$index] = "MONGO_URI=$newUri"
 Set-Clipboard -Value $newUri
 
 Write-Host 'server/.env updated (old copy kept as .env.bak).'
-Write-Host 'The full MONGO_URI is on the clipboard: paste it into Render -> ustauz-api -> Environment -> MONGO_URI.'
+Write-Host 'The full MONGO_URI is on the clipboard: paste it into Railway -> ustauz-api -> Variables -> MONGO_URI.'

@@ -13,7 +13,6 @@ import { connectRedis, disconnectRedis } from './config/redis';
 import { initSocketServer } from './sockets';
 import { startWorkers, stopWorkers } from './jobs';
 import { resetRedisOnce } from './common/utils/resetRedis';
-import { startKeepAwake } from './config/keepAwake';
 
 initSentry();
 
@@ -58,8 +57,6 @@ const start = async (): Promise<void> => {
       prefix: env.API_PREFIX,
       pid: process.pid,
     });
-    // One pinger is enough: in a cluster only the first worker runs it.
-    if (!cluster.isWorker || cluster.worker?.id === 1) startKeepAwake();
   });
 
   const shutdown = async (signal: string): Promise<void> => {

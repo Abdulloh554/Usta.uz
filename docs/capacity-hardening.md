@@ -17,9 +17,9 @@
 
 ## Still required before a large campaign
 
-1. Upgrade the sleeping one-instance Render free API to always-on paid compute. Size/replica count must follow measured peak traffic rather than total registered accounts. No billing changes were made.
+1. Size the one-replica Railway API (always on, US West) for the campaign. Size/replica count must follow measured peak traffic rather than total registered accounts. No billing changes were made.
 2. Use persistent production Redis/Key Value. Matching/refresh sessions/BullMQ still depend on Redis state. Broadcast progress and in-app notifications survive in MongoDB, but this does not make all Redis data durable. Device pushes after a crash between commit and enqueue are not guaranteed.
-3. Confirm the real MongoDB tier, disk capacity, connection limits, backups and restore procedure. Rotate the database password exposed by a diagnostic command error, and update Render/local credentials; Atlas account control is required for this.
+3. Confirm the real MongoDB tier, disk capacity, connection limits, backups and restore procedure. Rotate the database password exposed by a diagnostic command error, and update Railway/local credentials; Atlas account control is required for this.
 4. Run an isolated production-like staging test with one million synthetic accounts plus realistic orders/messages/visits. Include login/signup, writes, acceptance races, WebSocket connections/reconnect storms, queue backlog, long-running/spike tests and infrastructure failure/recovery. The local read smoke is only a preliminary check.
 5. Large admin searches still use contains regex and deep pages use skip/count; matching still joins candidate accounts before applying its final limit. Benchmark these with representative data and use cursor pagination/search indexes where measurements require it. API and background workers still share compute; separate worker hosting requires a paid service.
 
