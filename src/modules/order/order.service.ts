@@ -214,8 +214,11 @@ export const feedForMaster = async (
   const profile = await MasterProfile.findOne({ user: masterId }).lean();
   if (!profile) throw new NotFoundError('Master profile');
 
+  // No trades picked → every category.
+  const picked = profile.crafts ?? [];
   const categories = (Object.keys(CATEGORY_CRAFTS) as (keyof typeof CATEGORY_CRAFTS)[]).filter(
-    (category) => CATEGORY_CRAFTS[category].some((craft) => profile.crafts.includes(craft)),
+    (category) =>
+      picked.length === 0 || CATEGORY_CRAFTS[category].some((craft) => picked.includes(craft)),
   );
 
   const filter: FilterQuery<IOrder> = {

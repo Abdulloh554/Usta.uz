@@ -116,7 +116,7 @@ const schema = z.object({
    * work itself. 0 turns payments off entirely: accepting is free and
    * top-ups are refused.
    */
-  ORDER_ACCEPT_FEE: z.coerce.number().int().nonnegative().default(4999),
+  ORDER_ACCEPT_FEE: z.coerce.number().int().nonnegative().default(0),
   /**
    * Manual top-ups (MVP): the pro transfers to this card, then files a request
    * an admin confirms. Shown to the pro on `GET /wallet`; empty means unset.

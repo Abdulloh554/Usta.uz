@@ -82,7 +82,7 @@ services:
 
       # The per-job fee a pro pays on accept; 0 turns payments off.
       - key: ORDER_ACCEPT_FEE
-        value: '4999'
+        value: '0'
       # Manual top-ups: MANUAL_PAYMENT_CARD / _HOLDER / _NOTE are added in the
       # dashboard (Environment) once the card exists; they default to empty.
 

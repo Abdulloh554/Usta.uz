@@ -39,7 +39,7 @@ export const registerSchema = z
     role: z.enum([UserRole.CLIENT, UserRole.MASTER, UserRole.SELLER]),
     language: z.nativeEnum(Language).default(Language.UZ),
     acceptedRules: z.literal(true, { error: 'You must accept the app rules' }),
-    /** Pros only - the trades picked on the sign-up form. */
+    /** Pros only - the trades picked on the sign-up form. Optional: none means every job. */
     crafts: z
       .array(z.nativeEnum(Craft))
       .max(12)
@@ -47,15 +47,6 @@ export const registerSchema = z
       .optional(),
     about: z.string().trim().max(1000).optional(),
     regions: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (value.role === UserRole.MASTER && (!value.crafts || value.crafts.length === 0)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['crafts'],
-        message: 'Pick at least one trade',
-      });
-    }
   });
 
 /** Sends the sign-in code. Always answers the same, whether or not the account exists. */
