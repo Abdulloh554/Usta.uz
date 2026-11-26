@@ -210,7 +210,8 @@ describe('auth routes', () => {
   });
 
   describe('POST /auth/register (phone and password)', () => {
-    const { email: _email, ...phonePayload } = clientPayload;
+    // Only ever sent as JSON, which leaves an undefined field out: no email at all.
+    const phonePayload = { ...clientPayload, email: undefined };
     const withPassword = { ...phonePayload, password: 'secret123' };
 
     it('creates an account with no email and no code, mailing nothing', async () => {
