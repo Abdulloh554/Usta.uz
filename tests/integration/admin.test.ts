@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import mongoose from 'mongoose';
 import type { Express } from 'express';
@@ -11,6 +12,7 @@ import { MasterProfile } from '../../src/modules/user/masterProfile.model';
 import { Transaction } from '../../src/modules/wallet/transaction.model';
 import { Notification } from '../../src/modules/notification/notification.model';
 import { AdminLog, AdminAction } from '../../src/modules/admin/adminLog.model';
+import { Visit } from '../../src/modules/traffic/traffic.model';
 import {
   NotificationType,
   OrderStatus,
@@ -112,6 +114,39 @@ describe('admin routes', () => {
       expect(finance.netRevenue).toBe(4999);
       expect(finance.topUps).toBe(20_000);
       expect(finance.fee).toBe(4999);
+      // Nothing visited yet: zeros, and no start date to show.
+      expect(response.body.data.traffic).toEqual({ visits: 0, visitors: 0, today: 0, since: null });
+    });
+
+    it('counts website visits since the first one was recorded', async () => {
+      const browser = randomUUID();
+      const visit = (createdAt: Date, visitorId = browser, site = 'web') => ({
+        visitorId,
+        sessionId: randomUUID(),
+        site,
+        source: 'direct',
+        path: '/uz',
+        createdAt,
+      });
+      const first = new Date('2026-01-05T08:00:00Z');
+      await Visit.insertMany([
+        visit(new Date('2026-02-10T09:00:00Z')),
+        visit(first),
+        // Another browser, on the landing, today.
+        visit(new Date(), randomUUID(), 'landing'),
+      ]);
+
+      const response = await request(app)
+        .get(`${PREFIX}/admin/stats/overview`)
+        .set('Authorization', auth);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.traffic).toEqual({
+        visits: 3,
+        visitors: 2,
+        today: 1,
+        since: first.toISOString(),
+      });
     });
 
     it('returns one zero-filled point per day', async () => {

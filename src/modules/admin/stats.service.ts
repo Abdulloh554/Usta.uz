@@ -18,6 +18,7 @@ import { Chat, Message } from '../chat/chat.model';
 import { Product } from '../product/product.model';
 import { Review } from '../review/review.model';
 import { Transaction } from '../wallet/transaction.model';
+import { Visit } from '../traffic/traffic.model';
 
 /**
  * Uzbekistan has a fixed UTC+5 offset and no daylight saving, so a "day" on the
@@ -103,6 +104,15 @@ export type Overview = {
   products: { total: number; active: number; hidden: number; outOfStock: number; sold: number };
   chats: { total: number; open: number; messages: number; messagesToday: number };
   reviews: { total: number; hidden: number; averageStars: number };
+  /** Visits to the landing and the web app together, since counting began. */
+  traffic: {
+    visits: number;
+    /** Distinct anonymous browsers, as on the traffic page. */
+    visitors: number;
+    today: number;
+    /** When the first visit was recorded: counting started with the feature, not with the site. */
+    since: string | null;
+  };
 };
 
 const loadOverview = async (): Promise<Overview> => {
@@ -149,6 +159,10 @@ const loadOverview = async (): Promise<Overview> => {
     reviewsTotal,
     reviewsHidden,
     starRows,
+    visitsTotal,
+    visitsToday,
+    visitorRows,
+    firstVisit,
   ] = await Promise.all([
     User.countDocuments(),
     countBy((pipeline) => User.aggregate<CountRow>(pipeline), 'role'),
@@ -190,6 +204,14 @@ const loadOverview = async (): Promise<Overview> => {
       { $match: { isVisible: true } },
       { $group: { _id: null, total: { $avg: '$stars' }, count: { $sum: 1 } } },
     ]),
+    Visit.countDocuments(),
+    Visit.countDocuments({ createdAt: { $gte: today } }),
+    // One row per browser, then a count — no single document holding every ID.
+    Visit.aggregate<{ visitors: number }>([
+      { $group: { _id: '$visitorId' } },
+      { $count: 'visitors' },
+    ]).allowDiskUse(true),
+    Visit.findOne({}, { createdAt: 1 }).sort({ createdAt: 1 }).lean(),
   ]);
 
   const statusCounts = withZeros(Object.values(OrderStatus), byStatus);
@@ -240,6 +262,12 @@ const loadOverview = async (): Promise<Overview> => {
       total: reviewsTotal,
       hidden: reviewsHidden,
       averageStars: starRows[0] ? Math.round(starRows[0].total * 10) / 10 : 0,
+    },
+    traffic: {
+      visits: visitsTotal,
+      visitors: visitorRows[0]?.visitors ?? 0,
+      today: visitsToday,
+      since: firstVisit ? new Date(firstVisit.createdAt).toISOString() : null,
     },
   };
 };
