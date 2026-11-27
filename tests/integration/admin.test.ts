@@ -389,6 +389,35 @@ describe('admin routes', () => {
       expect((await remove(other.id as string)).body.error.code).toBe('ADMIN_PROTECTED');
     });
 
+    it('drops a deleted account from the list, its profile and the user figures', async () => {
+      const gone = await makeClient({ firstName: 'Shahnoza' });
+      const stays = await makeClient();
+      await remove(gone.id as string).expect(200);
+
+      const list = await request(app).get(`${PREFIX}/admin/users`).set('Authorization', auth);
+      const ids = (list.body.data.items as Array<{ id: string }>).map((item) => item.id);
+      expect(ids).toContain(stays.id);
+      expect(ids).not.toContain(gone.id);
+      // Not by searching either — the name it now carries is "Oʻchirilgan".
+      const search = await request(app)
+        .get(`${PREFIX}/admin/users?search=chirilgan`)
+        .set('Authorization', auth);
+      expect(search.body.data.total).toBe(0);
+
+      const profile = await request(app)
+        .get(`${PREFIX}/admin/users/${gone.id as string}`)
+        .set('Authorization', auth);
+      expect(profile.status).toBe(404);
+
+      const overview = await request(app)
+        .get(`${PREFIX}/admin/stats/overview`)
+        .set('Authorization', auth);
+      // The admin and the client who stays.
+      expect(overview.body.data.users.total).toBe(2);
+      expect(overview.body.data.users.byRole.client).toBe(1);
+      expect(overview.body.data.users.inactive).toBe(0);
+    });
+
     it('leaves a deleted account alone afterwards', async () => {
       const client = await makeClient();
       await remove(client.id as string).expect(200);

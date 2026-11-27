@@ -121,6 +121,9 @@ const loadOverview = async (): Promise<Overview> => {
   const month = daysAgo(30);
   const yesterday = new Date(Date.now() - DAY_MS);
 
+  // Deleted accounts are nameless placeholders, not people: they are left out of
+  // every user figure, as they are out of the panel's user list.
+  const people = { deletedAt: null };
   const settledFee = { type: TransactionType.ORDER_FEE, status: TransactionStatus.SUCCESS };
   const settledRefund = { type: TransactionType.REFUND, status: TransactionStatus.SUCCESS };
 
@@ -164,14 +167,14 @@ const loadOverview = async (): Promise<Overview> => {
     visitorRows,
     firstVisit,
   ] = await Promise.all([
-    User.countDocuments(),
-    countBy((pipeline) => User.aggregate<CountRow>(pipeline), 'role'),
-    User.countDocuments({ isBlocked: true }),
-    User.countDocuments({ isActive: false }),
-    User.countDocuments({ createdAt: { $gte: today } }),
-    User.countDocuments({ createdAt: { $gte: week } }),
-    User.countDocuments({ createdAt: { $gte: month } }),
-    User.countDocuments({ lastSeenAt: { $gte: yesterday } }),
+    User.countDocuments(people),
+    countBy((pipeline) => User.aggregate<CountRow>(pipeline), 'role', people),
+    User.countDocuments({ ...people, isBlocked: true }),
+    User.countDocuments({ ...people, isActive: false }),
+    User.countDocuments({ ...people, createdAt: { $gte: today } }),
+    User.countDocuments({ ...people, createdAt: { $gte: week } }),
+    User.countDocuments({ ...people, createdAt: { $gte: month } }),
+    User.countDocuments({ ...people, lastSeenAt: { $gte: yesterday } }),
     MasterProfile.countDocuments({ isOnline: true }),
     Order.countDocuments(),
     Order.countDocuments({ createdAt: { $gte: today } }),

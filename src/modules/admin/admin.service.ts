@@ -109,7 +109,9 @@ const USER_SORT: Record<ListUsersInput['sort'], Record<string, SortOrder>> = {
 };
 
 export const listUsers = async (input: ListUsersInput): Promise<Paginated<UserDocument>> => {
-  const filter: FilterQuery<IUser> = {};
+  // A deleted account is a nameless placeholder kept for the jobs and chats it
+  // was part of; it is no longer someone the panel lists.
+  const filter: FilterQuery<IUser> = { deletedAt: null };
   if (input.role) filter.role = input.role;
   if (input.status === 'active') Object.assign(filter, { isBlocked: false, isActive: true });
   if (input.status === 'blocked') filter.isBlocked = true;
@@ -145,7 +147,8 @@ export const listUsers = async (input: ListUsersInput): Promise<Paginated<UserDo
 
 export const getUser = async (userId: string) => {
   const user = await User.findById(userId).select('-pushTokens');
-  if (!user) throw new NotFoundError('User');
+  // Deleted for good means gone from the panel too, even by a direct link.
+  if (!user || user.deletedAt) throw new NotFoundError('User');
 
   const id = user._id;
   const [
