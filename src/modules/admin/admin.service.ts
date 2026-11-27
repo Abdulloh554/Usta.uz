@@ -109,8 +109,8 @@ const USER_SORT: Record<ListUsersInput['sort'], Record<string, SortOrder>> = {
 };
 
 export const listUsers = async (input: ListUsersInput): Promise<Paginated<UserDocument>> => {
-  // A deleted account is a nameless placeholder kept for the jobs and chats it
-  // was part of; it is no longer someone the panel lists.
+  // Deleting now removes an account outright; this only keeps out the ones the
+  // old deletion scrubbed, until the start-up purge removes them too.
   const filter: FilterQuery<IUser> = { deletedAt: null };
   if (input.role) filter.role = input.role;
   if (input.status === 'active') Object.assign(filter, { isBlocked: false, isActive: true });
@@ -147,7 +147,7 @@ export const listUsers = async (input: ListUsersInput): Promise<Paginated<UserDo
 
 export const getUser = async (userId: string) => {
   const user = await User.findById(userId).select('-pushTokens');
-  // Deleted for good means gone from the panel too, even by a direct link.
+  // A scrubbed leftover of the old deletion is gone for the panel too, even by a direct link.
   if (!user || user.deletedAt) throw new NotFoundError('User');
 
   const id = user._id;
@@ -227,8 +227,9 @@ const loadManageableUser = async (adminId: string, userId: string): Promise<User
   if (user.role === UserRole.ADMIN) {
     throw new ForbiddenError('Another admin cannot be managed from the panel', 'ADMIN_PROTECTED');
   }
-  // A deleted account is only a placeholder now: reactivating it, resetting its
-  // password or paying into it would bring back something that is gone.
+  // An account scrubbed by the old deletion, not yet removed by the start-up
+  // purge: reactivating it, resetting its password or paying into it would
+  // bring back something that is gone.
   if (user.deletedAt) {
     throw new ConflictError('This account has been deleted', 'USER_DELETED');
   }
@@ -236,9 +237,10 @@ const loadManageableUser = async (adminId: string, userId: string): Promise<User
 };
 
 /**
- * Deletes an account for good from the panel — the same scrub as the owner's
- * own "delete my account", without their password. The journal keeps who did
- * it and why, and (the point of deleting) not the person's name or number.
+ * Deletes an account for good from the panel — the same removal as the owner's
+ * own "delete my account" (the account and everything about it), without their
+ * password. The journal keeps who did it and why, and not the person's name or
+ * number: its earlier entries about them go with the account.
  */
 export const deleteUser = async (
   adminId: string,

@@ -1,14 +1,19 @@
-import type mongoose from 'mongoose';
+import mongoose from 'mongoose';
 import { keys, redis } from '../../config/redis';
 import { env } from '../../config/env';
 import { logger } from '../../config/logger';
 import { ConflictError, NotFoundError, UnauthorizedError } from '../../common/errors/ApiError';
 import type { Craft, Language } from '../../common/types';
-import { OrderStatus, UserRole } from '../../common/types';
+import { OrderStatus, TransactionStatus, UserRole } from '../../common/types';
 import { Order } from '../order/order.model';
-import { Chat } from '../chat/chat.model';
+import { Chat, Message } from '../chat/chat.model';
 import { Favorite, Product } from '../product/product.model';
+import { Purchase } from '../product/purchase.model';
 import { Notification } from '../notification/notification.model';
+import { Review, ReviewTarget } from '../review/review.model';
+import { recomputeRating } from '../review/review.service';
+import { Transaction } from '../wallet/transaction.model';
+import { AdminLog, AdminTarget } from '../admin/adminLog.model';
 import { disconnectUser } from '../../sockets/emitter';
 import { consumeOtp, logoutEverywhere, toPublicUser } from '../auth/auth.service';
 import type { PublicUser } from '../auth/auth.types';
@@ -269,12 +274,91 @@ export const workHistory = async (masterId: string, limit = 20) =>
     .lean();
 
 /**
- * The scrub itself, once whoever asked has been checked: the owner (above, with
+ * Removes an account and everything that is about it, for good:
+ *
+ * - the user, their trade profile, favourites, notifications, products (with
+ *   the favourites, reviews and purchases of them) and pending top-up requests;
+ * - the jobs they posted, every chat they were in with its messages, and every
+ *   review they wrote or received — the ratings those reviews counted towards
+ *   are worked out again;
+ * - the journal's entries about them.
+ *
+ * Jobs they took for someone else stay with that client, with no pro on them.
+ * Settled payments stay in the ledger without a name, so the platform's own
+ * takings do not change; the wallet balance goes with the account. The user is
+ * removed last, so a failure half-way leaves an account that can be deleted
+ * again rather than records pointing at nobody.
+ */
+export const removeAccount = async (accountId: mongoose.Types.ObjectId | string): Promise<void> => {
+  const id = new mongoose.Types.ObjectId(String(accountId));
+  const [ownOrders, ownProducts, chats, written] = await Promise.all([
+    Order.find({ client: id }).select('_id').lean(),
+    Product.find({ seller: id }).select('_id').lean(),
+    Chat.find({ participants: id }).select('_id').lean(),
+    Review.find({ author: id }).select('targetType target').lean(),
+  ]);
+  const orderIds = ownOrders.map((order) => order._id);
+  const productIds = ownProducts.map((product) => product._id);
+  const chatIds = chats.map((chat) => chat._id);
+
+  await Promise.all([
+    Message.deleteMany({ chat: { $in: chatIds } }),
+    Review.deleteMany({
+      $or: [
+        { author: id },
+        { order: { $in: orderIds } },
+        { targetType: ReviewTarget.MASTER, target: id },
+        { targetType: ReviewTarget.PRODUCT, target: { $in: productIds } },
+      ],
+    }),
+    Favorite.deleteMany({ $or: [{ user: id }, { product: { $in: productIds } }] }),
+    Purchase.deleteMany({ $or: [{ buyer: id }, { seller: id }] }),
+    // Theirs, and the ones others got about their jobs and chats.
+    Notification.deleteMany({
+      $or: [{ user: id }, { order: { $in: orderIds } }, { chat: { $in: chatIds } }],
+    }),
+    MasterProfile.deleteOne({ user: id }),
+    Transaction.deleteMany({ user: id, status: TransactionStatus.PENDING }),
+    AdminLog.deleteMany({ targetType: AdminTarget.USER, targetId: id }),
+  ]);
+
+  await Promise.all([
+    Chat.deleteMany({ _id: { $in: chatIds } }),
+    Order.deleteMany({ _id: { $in: orderIds } }),
+    Product.deleteMany({ _id: { $in: productIds } }),
+    Order.updateMany({ 'offers.master': id }, { $pull: { offers: { master: id } } }),
+    Transaction.updateMany({ user: id }, { $unset: { user: 1 } }),
+  ]);
+  // A job they finished for someone has no one left to rate; the done ones
+  // first, as the second update takes the pro off every remaining job.
+  await Order.updateMany(
+    { master: id, status: OrderStatus.DONE },
+    { $unset: { master: 1 }, $set: { isRated: true } },
+  );
+  await Order.updateMany({ master: id }, { $unset: { master: 1 } });
+
+  await User.deleteOne({ _id: id });
+
+  // The ratings the removed reviews counted towards — not this account's own,
+  // nor its products', which are gone with it.
+  const gone = new Set([String(id), ...productIds.map(String)]);
+  const recount = new Map<string, { targetType: ReviewTarget; target: mongoose.Types.ObjectId }>();
+  written.forEach((review) => {
+    if (!gone.has(String(review.target))) recount.set(`${review.targetType}:${String(review.target)}`, review);
+  });
+  await Promise.all([...recount.values()].map((review) => recomputeRating(review.targetType, review.target)));
+
+  await redis.srem(keys.onlineMasters, String(id));
+  await logoutEverywhere(String(id));
+  disconnectUser(String(id));
+};
+
+/**
+ * The removal, once whoever asked has been checked: the owner (below, with
  * their password or a mailed code) or an admin from the panel. A live job stops
  * it either way — the other side would be left waiting on nobody.
  */
 export const eraseAccount = async (user: UserDocument): Promise<void> => {
-  const userId = String(user._id);
   const live = await Order.exists({
     $or: [{ client: user._id }, { master: user._id }],
     status: { $in: [OrderStatus.PENDING, OrderStatus.MATCHING, OrderStatus.ACCEPTED] },
@@ -285,45 +369,28 @@ export const eraseAccount = async (user: UserDocument): Promise<void> => {
       'ACTIVE_ORDER_EXISTS',
     );
   }
+  await removeAccount(user._id);
+};
 
-  await Promise.all([
-    MasterProfile.deleteOne({ user: user._id }),
-    Favorite.deleteMany({ user: user._id }),
-    Notification.deleteMany({ user: user._id }),
-    Product.updateMany({ seller: user._id }, { $set: { isActive: false, deletedAt: new Date() } }),
-    Chat.updateMany({ participants: user._id }, { $set: { isClosed: true } }),
-    redis.srem(keys.onlineMasters, userId),
-  ]);
-
-  // `updateOne` rather than `save`: the scrubbed phone deliberately breaks the
-  // `+998…` format the schema enforces, so the number cannot be matched again.
-  await User.updateOne(
-    { _id: user._id },
-    {
-      $set: {
-        phone: `deleted:${String(user._id)}`,
-        firstName: 'Oʻchirilgan',
-        lastName: 'foydalanuvchi',
-        isActive: false,
-        deletedAt: new Date(),
-        pushTokens: [],
-      },
-      $unset: { avatarUrl: 1, blockReason: 1, email: 1 },
-    },
+/**
+ * Deletion used to scrub an account and keep it (`deletedAt` set, the phone
+ * replaced). This removes those leftovers the way deletion now works, wallet
+ * balance included. Run at start-up; once none are left it finds nothing.
+ */
+export const purgeScrubbedAccounts = async (): Promise<number> => {
+  const leftovers = await User.find({ deletedAt: { $ne: null } }).select('_id').lean();
+  // One at a time: each removal touches a dozen collections.
+  await leftovers.reduce<Promise<void>>(
+    (previous, account) => previous.then(() => removeAccount(account._id)),
+    Promise.resolve(),
   );
-
-  await logoutEverywhere(userId);
-  disconnectUser(userId);
+  return leftovers.length;
 };
 
 /**
  * Deleting an account, as Google Play requires apps that create them to offer.
- *
- * The person's own details go: phone, name, avatar, push tokens, trade profile,
- * saved products and notifications. Their jobs, messages and reviews stay,
- * because they are also the other side's history — but with nothing left to
- * identify who they were. The phone number is released, so the same number can
- * sign up again as a new account.
+ * Everything about the person goes (see `removeAccount`), and the phone number
+ * is free again, so the same number can sign up as a new account.
  */
 export const deleteAccount = async (
   userId: string,

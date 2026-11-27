@@ -445,7 +445,7 @@ describe('regressions found in role QA', () => {
   });
 
   describe('deleting your own account', () => {
-    it('scrubs the person, keeps their history and frees the number', async () => {
+    it('removes the person with everything about them and frees the number', async () => {
       const master = await makeMaster();
       const seller = await makeSeller();
       const product = await Product.create({ seller: seller._id, title: 'Drel', price: 100 });
@@ -460,15 +460,11 @@ describe('regressions found in role QA', () => {
         .send({ password: 'secret123' });
       expect(response.status).toBe(200);
 
-      const scrubbed = await User.findById(master._id);
-      expect(scrubbed!.phone).toBe(`deleted:${String(master._id)}`);
-      expect(scrubbed!.firstName).toBe('Oʻchirilgan');
-      expect(scrubbed!.isActive).toBe(false);
-      expect(scrubbed!.deletedAt).toBeInstanceOf(Date);
+      expect(await User.exists({ _id: master._id })).toBeNull();
       expect(await MasterProfile.countDocuments({ user: master._id })).toBe(0);
 
-      // The job stays — it is the other side's history too.
-      expect(await Order.findById(order._id)).not.toBeNull();
+      // The job they posted goes with them.
+      expect(await Order.findById(order._id)).toBeNull();
 
       // The session ends immediately, not in 15 minutes.
       const after = await request(app).get(`${PREFIX}/auth/me`).set('Authorization', auth);
@@ -494,7 +490,7 @@ describe('regressions found in role QA', () => {
         .send({ password: 'not-my-password' });
 
       expect(response.status).toBe(401);
-      expect((await User.findById(client._id))!.deletedAt).toBeUndefined();
+      expect(await User.exists({ _id: client._id })).not.toBeNull();
     });
 
     it('asks for the active job to be finished first', async () => {
@@ -529,9 +525,8 @@ describe('regressions found in role QA', () => {
 
       const response = await request(app).delete(`${PREFIX}/users/me`).set(auth).send({ code });
       expect(response.status).toBe(200);
-      expect((await User.findById(client._id))!.deletedAt).toBeInstanceOf(Date);
-      // The address is released along with the number.
-      expect((await User.findById(client._id))!.email).toBeUndefined();
+      // Gone, and with it the address and the number.
+      expect(await User.exists({ _id: client._id })).toBeNull();
     });
   });
 

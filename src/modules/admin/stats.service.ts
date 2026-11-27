@@ -121,8 +121,8 @@ const loadOverview = async (): Promise<Overview> => {
   const month = daysAgo(30);
   const yesterday = new Date(Date.now() - DAY_MS);
 
-  // Deleted accounts are nameless placeholders, not people: they are left out of
-  // every user figure, as they are out of the panel's user list.
+  // Leftovers of the old deletion (scrubbed, not removed) are not people: they
+  // stay out of every user figure until the start-up purge removes them.
   const people = { deletedAt: null };
   const settledFee = { type: TransactionType.ORDER_FEE, status: TransactionStatus.SUCCESS };
   const settledRefund = { type: TransactionType.REFUND, status: TransactionStatus.SUCCESS };

@@ -13,6 +13,7 @@ import { connectRedis, disconnectRedis } from './config/redis';
 import { initSocketServer } from './sockets';
 import { startWorkers, stopWorkers } from './jobs';
 import { resetRedisOnce } from './common/utils/resetRedis';
+import { purgeScrubbedAccounts } from './modules/user/user.service';
 
 initSentry();
 
@@ -34,6 +35,20 @@ const start = async (): Promise<void> => {
   await Promise.all([connectDatabase(), connectRedis()]);
   const reset = await resetRedisOnce(env.REDIS_RESET_TOKEN);
   if (reset) logger.info('Redis maintenance reset complete', reset);
+
+  // Accounts deleted before deletion removed everything are finished here —
+  // by one worker, in the background, so the server does not wait on it.
+  if (!cluster.worker || cluster.worker.id === 1) {
+    void purgeScrubbedAccounts()
+      .then((count) => {
+        if (count > 0) logger.info('Removed accounts left over from the old deletion', { count });
+      })
+      .catch((error: unknown) => {
+        logger.error('Could not remove accounts left over from the old deletion', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
 
   const app = createApp();
   const server = http.createServer(app);

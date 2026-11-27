@@ -13,6 +13,8 @@ import { Transaction } from '../../src/modules/wallet/transaction.model';
 import { Notification } from '../../src/modules/notification/notification.model';
 import { AdminLog, AdminAction } from '../../src/modules/admin/adminLog.model';
 import { Visit } from '../../src/modules/traffic/traffic.model';
+import { recomputeRating } from '../../src/modules/review/review.service';
+import { purgeScrubbedAccounts } from '../../src/modules/user/user.service';
 import {
   NotificationType,
   OrderStatus,
@@ -338,34 +340,133 @@ describe('admin routes', () => {
   describe('deleting a user', () => {
     const remove = (id: string, body: Record<string, unknown> = { reason: 'Soxta hisob' }) =>
       request(app).post(`${PREFIX}/admin/users/${id}/delete`).set('Authorization', auth).send(body);
+    const overview = () =>
+      request(app).get(`${PREFIX}/admin/stats/overview`).set('Authorization', auth);
 
-    it('scrubs a pro for good and keeps their finished jobs, without their name', async () => {
+    it('removes a pro and everything about them, keeping the jobs they did for others', async () => {
       const master = await makeMaster({ firstName: 'Jasur' });
       const client = await makeClient();
       const job = await makeOrder(client._id, { status: OrderStatus.DONE });
-      await Order.updateOne({ _id: job._id }, { master: master._id });
+      await Order.updateOne(
+        { _id: job._id },
+        { master: master._id, offers: [{ master: master._id, outcome: 'accepted' }] },
+      );
+      const chat = await Chat.create({ participants: [client._id, master._id], order: job._id });
+      await Message.create({ chat: chat._id, sender: master._id, text: 'Ertaga kelaman' });
+      await Review.create({
+        author: client._id,
+        targetType: ReviewTarget.MASTER,
+        target: master._id,
+        order: job._id,
+        stars: 5,
+      });
+      await Notification.create({
+        user: master._id,
+        type: NotificationType.ANNOUNCEMENT,
+        title: 'Salom',
+      });
+      await Transaction.create([
+        {
+          user: master._id,
+          type: TransactionType.ORDER_FEE,
+          status: TransactionStatus.SUCCESS,
+          provider: PaymentProvider.BALANCE,
+          amount: -4999,
+          order: job._id,
+        },
+        {
+          user: master._id,
+          type: TransactionType.TOP_UP,
+          status: TransactionStatus.PENDING,
+          provider: PaymentProvider.MANUAL,
+          amount: 20_000,
+        },
+      ]);
+      // An earlier journal entry about them, with their name in it.
+      await request(app)
+        .post(`${PREFIX}/admin/users/${master.id as string}/revoke-sessions`)
+        .set('Authorization', auth)
+        .expect(200);
 
       const response = await remove(master.id as string);
 
       expect(response.status).toBe(200);
       expect(response.body.data).toEqual({ deleted: true });
-      const gone = await User.findById(master._id).lean();
-      expect(gone).toMatchObject({
-        phone: `deleted:${master.id as string}`,
-        firstName: 'Oʻchirilgan',
-        lastName: 'foydalanuvchi',
-        isActive: false,
-      });
-      expect(gone!.deletedAt).toBeInstanceOf(Date);
+      expect(await User.exists({ _id: master._id })).toBeNull();
       expect(await MasterProfile.countDocuments({ user: master._id })).toBe(0);
-      // The client's history keeps the job; only the pro behind it is anonymous.
-      expect(await Order.countDocuments({ _id: job._id, master: master._id })).toBe(1);
+      expect(await Chat.countDocuments({ _id: chat._id })).toBe(0);
+      expect(await Message.countDocuments({ chat: chat._id })).toBe(0);
+      expect(await Review.countDocuments({ target: master._id })).toBe(0);
+      expect(await Notification.countDocuments({ user: master._id })).toBe(0);
 
-      const log = await AdminLog.findOne({ action: AdminAction.USER_DELETED }).lean();
-      expect(log!.targetId!.toString()).toBe(master.id);
-      expect(log!.summary).toContain('Soxta hisob');
-      expect(log!.summary).not.toContain('Jasur');
-      expect(log!.summary).not.toContain(master.phone);
+      // The client's job stays, with no pro on it and nothing left to rate.
+      const kept = await Order.findById(job._id).lean();
+      expect(kept!.master).toBeUndefined();
+      expect(kept!.offers).toHaveLength(0);
+      expect(kept!.isRated).toBe(true);
+
+      // Settled money stays in the ledger without a name; the pending request goes.
+      const ledger = await Transaction.find({ order: job._id }).lean();
+      expect(ledger).toHaveLength(1);
+      expect(ledger[0]!.user).toBeUndefined();
+      expect(await Transaction.countDocuments({ status: TransactionStatus.PENDING })).toBe(0);
+
+      // The journal keeps only the deletion itself, without their name.
+      const entries = await AdminLog.find({ targetId: master._id }).lean();
+      expect(entries.map((entry) => entry.action)).toEqual([AdminAction.USER_DELETED]);
+      expect(entries[0]!.summary).toContain('Soxta hisob');
+      expect(entries[0]!.summary).not.toContain('Jasur');
+    });
+
+    it("removes a client's own jobs and the reviews they wrote, and recounts the pro", async () => {
+      const client = await makeClient();
+      const master = await makeMaster();
+      const job = await makeOrder(client._id, { status: OrderStatus.DONE });
+      await Order.updateOne({ _id: job._id }, { master: master._id, isRated: true });
+      await Review.create({
+        author: client._id,
+        targetType: ReviewTarget.MASTER,
+        target: master._id,
+        order: job._id,
+        stars: 2,
+      });
+      await recomputeRating(ReviewTarget.MASTER, master._id);
+      expect((await MasterProfile.findOne({ user: master._id }))!.ratingCount).toBe(1);
+
+      await remove(client.id as string).expect(200);
+
+      expect(await Order.countDocuments({ _id: job._id })).toBe(0);
+      expect(await Review.countDocuments({ author: client._id })).toBe(0);
+      expect((await MasterProfile.findOne({ user: master._id }))!.ratingCount).toBe(0);
+      // The pro themself is untouched.
+      expect(await User.exists({ _id: master._id })).not.toBeNull();
+    });
+
+    it('takes their wallet out of the totals, and their number is free again', async () => {
+      const master = await makeMaster({ balance: 70_000 });
+      expect((await overview()).body.data.finance.walletBalances).toBe(70_000);
+
+      await remove(master.id as string).expect(200);
+
+      const after = (await overview()).body.data;
+      expect(after.finance.walletBalances).toBe(0);
+      expect(after.users.byRole.master).toBe(0);
+      const profile = await request(app)
+        .get(`${PREFIX}/admin/users/${master.id as string}`)
+        .set('Authorization', auth);
+      expect(profile.status).toBe(404);
+
+      // Not banned: the same number signs up as a new, empty account.
+      const again = await request(app).post(`${PREFIX}/auth/register`).send({
+        firstName: 'Yangi',
+        lastName: 'Hisob',
+        phone: master.phone,
+        password: 'secret123',
+        role: UserRole.CLIENT,
+        acceptedRules: true,
+      });
+      expect(again.status).toBe(201);
+      expect(again.body.data.user.balance).toBe(0);
     });
 
     it('refuses while the user still has a live job', async () => {
@@ -376,7 +477,7 @@ describe('admin routes', () => {
 
       expect(response.status).toBe(409);
       expect(response.body.error.code).toBe('ACTIVE_ORDER_EXISTS');
-      expect((await User.findById(client._id))!.deletedAt).toBeUndefined();
+      expect(await User.exists({ _id: client._id })).not.toBeNull();
     });
 
     it('asks for a reason, and spares the admin themself and other admins', async () => {
@@ -389,50 +490,31 @@ describe('admin routes', () => {
       expect((await remove(other.id as string)).body.error.code).toBe('ADMIN_PROTECTED');
     });
 
-    it('drops a deleted account from the list, its profile and the user figures', async () => {
-      const gone = await makeClient({ firstName: 'Shahnoza' });
-      const stays = await makeClient();
-      await remove(gone.id as string).expect(200);
+    it('finishes accounts the old deletion only scrubbed, wallet included', async () => {
+      const leftover = await makeMaster({ balance: 12_000 });
+      const job = await makeOrder(leftover._id, { status: OrderStatus.DONE });
+      await User.updateOne(
+        { _id: leftover._id },
+        {
+          $set: {
+            phone: `deleted:${leftover.id as string}`,
+            firstName: 'Oʻchirilgan',
+            lastName: 'foydalanuvchi',
+            isActive: false,
+            deletedAt: new Date(),
+          },
+        },
+      );
+      const alive = await makeClient();
 
-      const list = await request(app).get(`${PREFIX}/admin/users`).set('Authorization', auth);
-      const ids = (list.body.data.items as Array<{ id: string }>).map((item) => item.id);
-      expect(ids).toContain(stays.id);
-      expect(ids).not.toContain(gone.id);
-      // Not by searching either — the name it now carries is "Oʻchirilgan".
-      const search = await request(app)
-        .get(`${PREFIX}/admin/users?search=chirilgan`)
-        .set('Authorization', auth);
-      expect(search.body.data.total).toBe(0);
+      expect(await purgeScrubbedAccounts()).toBe(1);
 
-      const profile = await request(app)
-        .get(`${PREFIX}/admin/users/${gone.id as string}`)
-        .set('Authorization', auth);
-      expect(profile.status).toBe(404);
-
-      const overview = await request(app)
-        .get(`${PREFIX}/admin/stats/overview`)
-        .set('Authorization', auth);
-      // The admin and the client who stays.
-      expect(overview.body.data.users.total).toBe(2);
-      expect(overview.body.data.users.byRole.client).toBe(1);
-      expect(overview.body.data.users.inactive).toBe(0);
-    });
-
-    it('leaves a deleted account alone afterwards', async () => {
-      const client = await makeClient();
-      await remove(client.id as string).expect(200);
-
-      const again = await remove(client.id as string);
-      expect(again.status).toBe(409);
-      expect(again.body.error.code).toBe('USER_DELETED');
-
-      const revive = await request(app)
-        .patch(`${PREFIX}/admin/users/${client.id as string}/status`)
-        .set('Authorization', auth)
-        .send({ isActive: true });
-      expect(revive.status).toBe(409);
-      expect(revive.body.error.code).toBe('USER_DELETED');
-      expect((await User.findById(client._id))!.isActive).toBe(false);
+      expect(await User.exists({ _id: leftover._id })).toBeNull();
+      expect(await Order.countDocuments({ _id: job._id })).toBe(0);
+      expect(await User.exists({ _id: alive._id })).not.toBeNull();
+      expect((await overview()).body.data.finance.walletBalances).toBe(0);
+      // Once done, there is nothing left to find.
+      expect(await purgeScrubbedAccounts()).toBe(0);
     });
   });
 
