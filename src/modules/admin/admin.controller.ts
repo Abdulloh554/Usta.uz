@@ -12,6 +12,7 @@ import type {
   ApprovePaymentInput,
   AssistantInput,
   BroadcastInput,
+  DeleteUserInput,
   ListChatsInput,
   ListLogsInput,
   ListOrdersInput,
@@ -93,6 +94,11 @@ export const revokeSessions = asyncHandler<AdminRequest>(async (req, res) => {
 export const resetPassword = asyncHandler<AdminRequest>(async (req, res) => {
   await adminService.resetPassword(req.user.id, id(req), req.body as ResetPasswordInput);
   ok(res, { reset: true });
+});
+
+export const deleteUser = asyncHandler<AdminRequest>(async (req, res) => {
+  await adminService.deleteUser(req.user.id, id(req), req.body as DeleteUserInput);
+  ok(res, { deleted: true });
 });
 
 /* — jobs ("e'lonlar") — */

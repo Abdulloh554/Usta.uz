@@ -126,6 +126,11 @@ export const resetPasswordSchema = z.object({
   password: z.string().min(6).max(128),
 });
 
+/** Deleting for good is the one user action that cannot be undone, so it says why. */
+export const deleteUserSchema = z.object({
+  reason: z.string().trim().min(3).max(300),
+});
+
 export const listLogsSchema = paginationSchema.extend({
   action: z.nativeEnum(AdminAction).optional(),
   admin: objectIdSchema.optional(),
@@ -176,3 +181,4 @@ export type ListPaymentsInput = z.infer<typeof listPaymentsSchema>;
 export type ApprovePaymentInput = z.infer<typeof approvePaymentSchema>;
 export type RejectPaymentInput = z.infer<typeof rejectPaymentSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type DeleteUserInput = z.infer<typeof deleteUserSchema>;

@@ -9,6 +9,7 @@ export const AdminAction = {
   USER_DEACTIVATED: 'user.deactivated',
   USER_BALANCE_ADJUSTED: 'user.balance_adjusted',
   USER_SESSIONS_REVOKED: 'user.sessions_revoked',
+  USER_DELETED: 'user.deleted',
   ORDER_CANCELLED: 'order.cancelled',
   ORDER_FEE_REFUNDED: 'order.fee_refunded',
   CHAT_CLOSED: 'chat.closed',

@@ -269,30 +269,12 @@ export const workHistory = async (masterId: string, limit = 20) =>
     .lean();
 
 /**
- * Deleting an account, as Google Play requires apps that create them to offer.
- *
- * The person's own details go: phone, name, avatar, push tokens, trade profile,
- * saved products and notifications. Their jobs, messages and reviews stay,
- * because they are also the other side's history — but with nothing left to
- * identify who they were. The phone number is released, so the same number can
- * sign up again as a new account.
+ * The scrub itself, once whoever asked has been checked: the owner (above, with
+ * their password or a mailed code) or an admin from the panel. A live job stops
+ * it either way — the other side would be left waiting on nobody.
  */
-export const deleteAccount = async (
-  userId: string,
-  proof: { password?: string; code?: string },
-): Promise<void> => {
-  const user = await User.findById(userId).select('+passwordHash');
-  if (!user) throw new NotFoundError('User');
-
-  if (proof.code) {
-    // Code-only accounts have no password: the mailed code is the re-check.
-    if (!user.email)
-      throw new UnauthorizedError('The code is wrong or has expired', 'INVALID_CODE');
-    await consumeOtp('delete', user.email, proof.code);
-  } else if (!proof.password || !(await user.comparePassword(proof.password))) {
-    throw new UnauthorizedError('The password is incorrect', 'INVALID_CREDENTIALS');
-  }
-
+export const eraseAccount = async (user: UserDocument): Promise<void> => {
+  const userId = String(user._id);
   const live = await Order.exists({
     $or: [{ client: user._id }, { master: user._id }],
     status: { $in: [OrderStatus.PENDING, OrderStatus.MATCHING, OrderStatus.ACCEPTED] },
@@ -332,7 +314,34 @@ export const deleteAccount = async (
 
   await logoutEverywhere(userId);
   disconnectUser(userId);
+};
 
+/**
+ * Deleting an account, as Google Play requires apps that create them to offer.
+ *
+ * The person's own details go: phone, name, avatar, push tokens, trade profile,
+ * saved products and notifications. Their jobs, messages and reviews stay,
+ * because they are also the other side's history — but with nothing left to
+ * identify who they were. The phone number is released, so the same number can
+ * sign up again as a new account.
+ */
+export const deleteAccount = async (
+  userId: string,
+  proof: { password?: string; code?: string },
+): Promise<void> => {
+  const user = await User.findById(userId).select('+passwordHash');
+  if (!user) throw new NotFoundError('User');
+
+  if (proof.code) {
+    // Code-only accounts have no password: the mailed code is the re-check.
+    if (!user.email)
+      throw new UnauthorizedError('The code is wrong or has expired', 'INVALID_CODE');
+    await consumeOtp('delete', user.email, proof.code);
+  } else if (!proof.password || !(await user.comparePassword(proof.password))) {
+    throw new UnauthorizedError('The password is incorrect', 'INVALID_CREDENTIALS');
+  }
+
+  await eraseAccount(user);
   logger.info('Account deleted by its owner', { userId });
 };
 

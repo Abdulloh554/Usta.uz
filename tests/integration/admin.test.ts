@@ -335,6 +335,78 @@ describe('admin routes', () => {
     });
   });
 
+  describe('deleting a user', () => {
+    const remove = (id: string, body: Record<string, unknown> = { reason: 'Soxta hisob' }) =>
+      request(app).post(`${PREFIX}/admin/users/${id}/delete`).set('Authorization', auth).send(body);
+
+    it('scrubs a pro for good and keeps their finished jobs, without their name', async () => {
+      const master = await makeMaster({ firstName: 'Jasur' });
+      const client = await makeClient();
+      const job = await makeOrder(client._id, { status: OrderStatus.DONE });
+      await Order.updateOne({ _id: job._id }, { master: master._id });
+
+      const response = await remove(master.id as string);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data).toEqual({ deleted: true });
+      const gone = await User.findById(master._id).lean();
+      expect(gone).toMatchObject({
+        phone: `deleted:${master.id as string}`,
+        firstName: 'Oʻchirilgan',
+        lastName: 'foydalanuvchi',
+        isActive: false,
+      });
+      expect(gone!.deletedAt).toBeInstanceOf(Date);
+      expect(await MasterProfile.countDocuments({ user: master._id })).toBe(0);
+      // The client's history keeps the job; only the pro behind it is anonymous.
+      expect(await Order.countDocuments({ _id: job._id, master: master._id })).toBe(1);
+
+      const log = await AdminLog.findOne({ action: AdminAction.USER_DELETED }).lean();
+      expect(log!.targetId!.toString()).toBe(master.id);
+      expect(log!.summary).toContain('Soxta hisob');
+      expect(log!.summary).not.toContain('Jasur');
+      expect(log!.summary).not.toContain(master.phone);
+    });
+
+    it('refuses while the user still has a live job', async () => {
+      const client = await makeClient();
+      await makeOrder(client._id, { status: OrderStatus.PENDING });
+
+      const response = await remove(client.id as string);
+
+      expect(response.status).toBe(409);
+      expect(response.body.error.code).toBe('ACTIVE_ORDER_EXISTS');
+      expect((await User.findById(client._id))!.deletedAt).toBeUndefined();
+    });
+
+    it('asks for a reason, and spares the admin themself and other admins', async () => {
+      const client = await makeClient();
+      expect((await remove(client.id as string, {})).status).toBe(422);
+      expect((await remove(client.id as string, { reason: 'x' })).status).toBe(422);
+
+      expect((await remove(adminId)).body.error.code).toBe('ADMIN_SELF');
+      const other = await makeAdmin();
+      expect((await remove(other.id as string)).body.error.code).toBe('ADMIN_PROTECTED');
+    });
+
+    it('leaves a deleted account alone afterwards', async () => {
+      const client = await makeClient();
+      await remove(client.id as string).expect(200);
+
+      const again = await remove(client.id as string);
+      expect(again.status).toBe(409);
+      expect(again.body.error.code).toBe('USER_DELETED');
+
+      const revive = await request(app)
+        .patch(`${PREFIX}/admin/users/${client.id as string}/status`)
+        .set('Authorization', auth)
+        .send({ isActive: true });
+      expect(revive.status).toBe(409);
+      expect(revive.body.error.code).toBe('USER_DELETED');
+      expect((await User.findById(client._id))!.isActive).toBe(false);
+    });
+  });
+
   describe('jobs', () => {
     it('lists and finds jobs by code', async () => {
       const client = await makeClient();

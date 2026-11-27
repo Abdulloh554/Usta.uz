@@ -35,10 +35,12 @@ import { recomputeRating } from '../review/review.service';
 import { notify } from '../notification/notification.service';
 import { abortMatching } from '../matching/matching.service';
 import { logoutEverywhere } from '../auth/auth.service';
+import { eraseAccount } from '../user/user.service';
 import { AdminAction, AdminLog, AdminTarget, type AdminLogDocument } from './adminLog.model';
 import type {
   AdjustBalanceInput,
   AdminCancelOrderInput,
+  DeleteUserInput,
   ListChatsInput,
   ListLogsInput,
   ListOrdersInput,
@@ -222,7 +224,34 @@ const loadManageableUser = async (adminId: string, userId: string): Promise<User
   if (user.role === UserRole.ADMIN) {
     throw new ForbiddenError('Another admin cannot be managed from the panel', 'ADMIN_PROTECTED');
   }
+  // A deleted account is only a placeholder now: reactivating it, resetting its
+  // password or paying into it would bring back something that is gone.
+  if (user.deletedAt) {
+    throw new ConflictError('This account has been deleted', 'USER_DELETED');
+  }
   return user;
+};
+
+/**
+ * Deletes an account for good from the panel — the same scrub as the owner's
+ * own "delete my account", without their password. The journal keeps who did
+ * it and why, and (the point of deleting) not the person's name or number.
+ */
+export const deleteUser = async (
+  adminId: string,
+  userId: string,
+  input: DeleteUserInput,
+): Promise<void> => {
+  const user = await loadManageableUser(adminId, userId);
+  await eraseAccount(user);
+  await record(
+    adminId,
+    AdminAction.USER_DELETED,
+    AdminTarget.USER,
+    userId,
+    `Foydalanuvchi butunlay o'chirildi: ${input.reason}`,
+    { reason: input.reason, role: user.role },
+  );
 };
 
 export const updateUserStatus = async (
@@ -253,7 +282,7 @@ export const updateUserStatus = async (
     actions.push(
       input.isActive
         ? [AdminAction.USER_ACTIVATED, `${user.fullName()} hisobi faollashtirildi`]
-        : [AdminAction.USER_DEACTIVATED, `${user.fullName()} hisobi o'chirildi`],
+        : [AdminAction.USER_DEACTIVATED, `${user.fullName()} hisobi faolsizlantirildi`],
     );
   }
 

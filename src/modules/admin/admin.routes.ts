@@ -12,6 +12,7 @@ import {
   approvePaymentSchema,
   assistantSchema,
   broadcastSchema,
+  deleteUserSchema,
   listChatsSchema,
   listLogsSchema,
   listOrdersSchema,
@@ -74,6 +75,13 @@ adminRouter.post(
   '/users/:id/password',
   validate({ params: idParamSchema, body: resetPasswordSchema }),
   controller.resetPassword,
+);
+// POST rather than DELETE: the request carries a reason, and a body on DELETE is
+// something proxies are allowed to drop.
+adminRouter.post(
+  '/users/:id/delete',
+  validate({ params: idParamSchema, body: deleteUserSchema }),
+  controller.deleteUser,
 );
 
 /* — jobs ("e'lonlar") — */
