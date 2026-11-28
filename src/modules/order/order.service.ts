@@ -83,8 +83,7 @@ export const createOrder = async (
       );
       if (result.matchedCount !== 1) throw new ForbiddenError('Account is unavailable');
     }
-    // A client may have any number of jobs searching at once; flooding is held
-    // back by `orderCreateLimiter` on the route, not here.
+    // A client may post any number of jobs, searching at once or not.
 
     return createWithUniqueCode(
       {

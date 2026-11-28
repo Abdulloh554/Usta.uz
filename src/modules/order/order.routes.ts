@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../../common/middlewares/auth.middleware';
 import { validate } from '../../common/middlewares/validate.middleware';
-import { orderCreateLimiter } from '../../common/middlewares/rateLimit.middleware';
 import { UserRole } from '../../common/types';
 import * as controller from './order.controller';
 import {
@@ -28,7 +27,6 @@ orderRouter.get('/offer', authorize(UserRole.MASTER), controller.outstandingOffe
 orderRouter.post(
   '/',
   authorize(UserRole.CLIENT),
-  orderCreateLimiter,
   validate({ body: createOrderSchema }),
   controller.create,
 );

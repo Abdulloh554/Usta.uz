@@ -206,9 +206,6 @@ export const otpEmailLimiter = build(
 /** Every email sent is a request someone can abuse - cap them per caller. */
 export const emailSendLimiter = build('email', 60 * 60_000, 5, 'Too many email requests, try again in an hour');
 
-/** Posting jobs — stops a client flooding the matching queue. */
-export const orderCreateLimiter = build('order', 60 * 60_000, 20, 'Too many jobs posted, try again later');
-
 export const assistantLimiter = build('assistant', 10 * 60_000, 20, 'AI so‘rovlar limiti. 10 daqiqadan so‘ng qayta urining.');
 
 /**
