@@ -83,15 +83,8 @@ export const createOrder = async (
       );
       if (result.matchedCount !== 1) throw new ForbiddenError('Account is unavailable');
     }
-    // One live job at a time keeps the client's home screen honest — it shows a
-    // single "active job" card — and stops the matching queue being flooded.
-    const live = await Order.exists({
-      client: clientId,
-      status: { $in: [OrderStatus.PENDING, OrderStatus.MATCHING] },
-    }).session(session);
-    if (live) {
-      throw new ConflictError('You already have a job waiting for a pro', 'ACTIVE_ORDER_EXISTS');
-    }
+    // A client may have any number of jobs searching at once; flooding is held
+    // back by `orderCreateLimiter` on the route, not here.
 
     return createWithUniqueCode(
       {

@@ -18,7 +18,7 @@ import { Visit } from '../../src/modules/traffic/traffic.model';
 import { trafficReport } from '../../src/modules/traffic/traffic.service';
 
 describe('capacity and concurrency regressions', () => {
-  it('creates exactly one waiting job for eight simultaneous submissions', async () => {
+  it('creates every job of eight simultaneous submissions, each with its own code', async () => {
     const client = await makeClient();
     const results = await Promise.allSettled(
       Array.from({ length: 8 }, () =>
@@ -30,10 +30,9 @@ describe('capacity and concurrency regressions', () => {
         }),
       ),
     );
-    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
-    expect(await Order.countDocuments({ client: client._id })).toBe(1);
-    for (const result of results)
-      if (result.status === 'rejected') expect(result.reason.code).toBe('ACTIVE_ORDER_EXISTS');
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(8);
+    const orders = await Order.find({ client: client._id }).select('code').lean();
+    expect(new Set(orders.map((order) => order.code)).size).toBe(8);
   });
 
   it('reserves one pro for only one of two simultaneous matching runs', async () => {

@@ -96,15 +96,16 @@ describe('the job lifecycle', () => {
     expect(profile!.ratingCount).toBe(1);
   });
 
-  it('will not let a client post a second job while one is still searching', async () => {
+  it('lets a client post a second job while the first is still searching', async () => {
     const client = await makeClient();
     const auth = bearer(client.id as string, UserRole.CLIENT);
 
-    await request(app).post(`${PREFIX}/orders`).set('Authorization', auth).send(newJob);
+    const first = await request(app).post(`${PREFIX}/orders`).set('Authorization', auth).send(newJob);
     const second = await request(app).post(`${PREFIX}/orders`).set('Authorization', auth).send(newJob);
 
-    expect(second.status).toBe(409);
-    expect(second.body.error.code).toBe('ACTIVE_ORDER_EXISTS');
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(await Order.countDocuments({ client: client._id })).toBe(2);
   });
 
   it('refuses to let a pro post a job', async () => {
