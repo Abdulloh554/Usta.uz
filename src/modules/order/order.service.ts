@@ -17,7 +17,7 @@ import { SocketEvent } from '../../sockets/events';
 import { MasterProfile } from '../user/masterProfile.model';
 import { Chat } from '../chat/chat.model';
 import { notify } from '../notification/notification.service';
-import { abortMatching, startMatching } from '../matching/matching.service';
+import { abortMatching, isMasterBusy, startMatching } from '../matching/matching.service';
 import { CATEGORY_CRAFTS } from '../matching/matching.types';
 import { Order, type IOrder, type OrderDocument } from './order.model';
 import type { CancelOrderInput, CreateOrderInput, ListOrdersInput } from './order.validator';
@@ -213,6 +213,9 @@ export const feedForMaster = async (
 ): Promise<Paginated<OrderDocument>> => {
   const profile = await MasterProfile.findOne({ user: masterId }).lean();
   if (!profile) throw new NotFoundError('Master profile');
+
+  // A pro still working on a job they took sees no new ones until it is done.
+  if (await isMasterBusy(masterId)) return paginate([], 0, page, limit);
 
   const categories = (Object.keys(CATEGORY_CRAFTS) as (keyof typeof CATEGORY_CRAFTS)[]).filter(
     (category) => CATEGORY_CRAFTS[category].some((craft) => profile.crafts.includes(craft)),

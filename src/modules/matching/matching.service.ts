@@ -35,6 +35,19 @@ import {
 const OFFER_TIMEOUT = env.MATCH_OFFER_TIMEOUT_SECONDS;
 
 /**
+ * A pro is busy while a job they took is still open (accepted, not yet done or
+ * cancelled). Busy pros are not rung, see an empty feed and cannot claim more.
+ */
+export const busyMasterIds = async (): Promise<mongoose.Types.ObjectId[]> =>
+  Order.distinct('master', { status: OrderStatus.ACCEPTED, master: { $exists: true } });
+
+export const isMasterBusy = async (masterId: string): Promise<boolean> =>
+  (await Order.exists({
+    status: OrderStatus.ACCEPTED,
+    master: new mongoose.Types.ObjectId(masterId),
+  })) !== null;
+
+/**
  * Ranks the pros who could take this job.
  *
  * Filters: trade matches the job category, the pro is available and either
@@ -54,6 +67,8 @@ export const buildCandidates = async (order: OrderDocument): Promise<MatchCandid
   const baseMatch: Record<string, unknown> = {
     crafts: { $in: crafts },
     isAvailable: true,
+    // A pro still working on a job they took is not offered another.
+    user: { $nin: await busyMasterIds() },
   };
 
   const seenSince = new Date(Date.now() - env.MATCH_OFFLINE_GRACE_MINUTES * 60_000);
@@ -496,6 +511,9 @@ export const acceptOffer = async (
     throw new ConflictError('This job has already been taken', 'OFFER_TAKEN');
   }
   if (!offer) await assertClaimable(orderId, masterId);
+  if (await isMasterBusy(masterId)) {
+    throw new ConflictError('Finish your current job before taking another', 'MASTER_BUSY');
+  }
 
   const fee = env.ORDER_ACCEPT_FEE;
   const useTransaction = supportsTransactions();

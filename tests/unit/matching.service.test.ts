@@ -57,6 +57,29 @@ describe('matching service', () => {
       expect(await buildCandidates(order)).toHaveLength(0);
     });
 
+    it('leaves out a pro who is still working on a job they took', async () => {
+      const client = await makeClient();
+      const busy = await makeMaster({ rating: 4.9 });
+      const free = await makeMaster({ rating: 4.0 });
+      const current = await makeOrder(client._id, { status: OrderStatus.ACCEPTED });
+      await Order.updateOne({ _id: current._id }, { $set: { master: busy._id } });
+      const order = await makeOrder(client._id);
+
+      const candidates = await buildCandidates(order);
+
+      expect(candidates.map((c) => c.masterId)).toEqual([free.id]);
+    });
+
+    it('offers again once the pro has finished their job', async () => {
+      const client = await makeClient();
+      const master = await makeMaster();
+      const done = await makeOrder(client._id, { status: OrderStatus.DONE });
+      await Order.updateOne({ _id: done._id }, { $set: { master: master._id } });
+      const order = await makeOrder(client._id);
+
+      expect((await buildCandidates(order)).map((c) => c.masterId)).toEqual([master.id]);
+    });
+
     it('only considers trades that serve the job category', async () => {
       const client = await makeClient();
       await makeMaster({ crafts: [Craft.PLUMBER] });
@@ -245,6 +268,20 @@ describe('matching service', () => {
       expect(reloaded!.status).toBe(OrderStatus.ACCEPTED);
       expect(reloaded!.master!.toString()).toBe(master.id);
       expect(await Chat.findById(result.chatId)).not.toBeNull();
+    });
+
+    it('refuses a pro who is still working on another job', async () => {
+      const client = await makeClient();
+      const master = await makeMaster({ balance: 50_000 });
+      const first = await makeOrder(client._id);
+      const second = await makeOrder(client._id);
+
+      await acceptOffer(first.id as string, master.id as string);
+
+      await expect(acceptOffer(second.id as string, master.id as string)).rejects.toMatchObject({
+        code: 'MASTER_BUSY',
+      });
+      expect((await Order.findById(second._id))!.status).toBe(OrderStatus.PENDING);
     });
 
     it('refuses a claim on a trade the pro does not work in', async () => {
